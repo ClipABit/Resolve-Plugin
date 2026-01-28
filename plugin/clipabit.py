@@ -18,7 +18,6 @@ try:
                                  QDialog, QCheckBox, QGridLayout, QSizePolicy, QSpacerItem)
     from PyQt6.QtCore import Qt, QTimer, QThread, pyqtSignal, QSize
     from PyQt6.QtGui import QFont, QPixmap, QIcon
-    from PyQt6.QtSvgWidgets import QSvgWidget
 except ImportError as e:
     print(f"Error: PyQt6 not found or missing component: {e}")
     print("Please run 'pip install PyQt6'")
@@ -41,8 +40,6 @@ class Theme:
         'search_placeholder': '#8E8E93',
         'button_text': '#000000',
         'border': '#4A4B52',
-        'logo_bg': '#9E9E9E',
-        'logo_icon': '#26272E',
     }
     
     # Light theme
@@ -58,8 +55,6 @@ class Theme:
         'search_placeholder': '#8E8E93',
         'button_text': '#000000',
         'border': '#D0D0D0',
-        'logo_bg': '#9E9E9E',
-        'logo_icon': '#26272E',
     }
     
     # Current theme (can be toggled or auto-detected)
@@ -291,14 +286,10 @@ class ClipABitApp(QWidget):
         layout = QHBoxLayout()
         layout.setContentsMargins(20, 15, 20, 15)
         
-        # Logo (SVG) - left side
-        # Original SVG is 292x135, maintain aspect ratio
-        logo_height = 50
-        logo_width = int(logo_height * (292 / 135))  # ~108px
-        self.logo_widget = QSvgWidget()
-        self.logo_widget.setFixedSize(logo_width, logo_height)
-        self._update_logo()  # Load the correct logo based on theme
-        layout.addWidget(self.logo_widget)
+        # Logo - simple text
+        logo_label = QLabel("Clipabit")
+        logo_label.setObjectName("logoText")
+        layout.addWidget(logo_label)
         
         # Spacer to push buttons to the right
         layout.addStretch()
@@ -318,29 +309,6 @@ class ClipABitApp(QWidget):
         
         header.setLayout(layout)
         return header
-    
-    def _update_logo(self):
-        """Update the logo SVG based on current theme."""
-        if not hasattr(self, 'logo_widget'):
-            return
-            
-        # Get the path to the assets folder
-        try:
-            script_dir = Path(__file__).resolve().parent
-        except Exception:
-            script_dir = Path.cwd()
-        
-        # Select logo based on theme
-        if Theme.current == Theme.DARK:
-            logo_path = script_dir / "assets" / "logo-dark.svg"
-        else:
-            logo_path = script_dir / "assets" / "logo-light.svg"
-        
-        # Load the SVG if it exists
-        if logo_path.exists():
-            self.logo_widget.load(str(logo_path))
-        else:
-            print(f"Logo not found: {logo_path}")
     
     def _create_search_bar(self):
         """Create the pill-shaped search bar matching Figma design."""
@@ -387,6 +355,13 @@ class ClipABitApp(QWidget):
             /* Header */
             QWidget#header {{
                 background-color: {t['background']};
+            }}
+            
+            /* Logo text */
+            QLabel#logoText {{
+                color: {t['text']};
+                font-size: 24px;
+                font-weight: bold;
             }}
             
             /* Header button */
@@ -662,7 +637,6 @@ class ClipABitApp(QWidget):
         else:
             Theme.current = Theme.DARK
         self._apply_theme()
-        self._update_logo()
     
     def _get_file_status_text(self):
         """Get the file status text for display."""
