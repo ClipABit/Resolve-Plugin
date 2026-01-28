@@ -286,11 +286,6 @@ class ClipABitApp(QWidget):
         layout = QHBoxLayout()
         layout.setContentsMargins(20, 15, 20, 15)
         
-        # Logo - simple text
-        logo_label = QLabel("Clipabit")
-        logo_label.setObjectName("logoText")
-        layout.addWidget(logo_label)
-        
         # Spacer to push buttons to the right
         layout.addStretch()
         
@@ -355,13 +350,6 @@ class ClipABitApp(QWidget):
             /* Header */
             QWidget#header {{
                 background-color: {t['background']};
-            }}
-            
-            /* Logo text */
-            QLabel#logoText {{
-                color: {t['text']};
-                font-size: 24px;
-                font-weight: bold;
             }}
             
             /* Header button */
