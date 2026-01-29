@@ -15,7 +15,8 @@ try:
     from PyQt6.QtWidgets import (QApplication, QWidget, QVBoxLayout, QHBoxLayout,
                                  QLabel, QPushButton, QMessageBox, QLineEdit,
                                  QScrollArea, QFrame, QSplitter, QListWidget, QListWidgetItem,
-                                 QDialog, QCheckBox, QGridLayout, QSizePolicy, QSpacerItem)
+                                 QDialog, QCheckBox, QGridLayout, QSizePolicy, QSpacerItem,
+                                 QProgressBar, QFileDialog)
     from PyQt6.QtCore import Qt, QTimer, QThread, pyqtSignal, QSize
     from PyQt6.QtGui import QFont, QPixmap, QIcon
 except ImportError as e:
@@ -278,22 +279,28 @@ class ClipABitApp(QWidget):
         self.setLayout(main_layout)
     
     def _create_header(self):
-        """Create the header bar with logo, Active Jobs/Debug button and settings."""
+        """Create the header bar with Media Pool, Debug buttons and settings."""
         header = QWidget()
-        header.setFixedHeight(80)
+        header.setFixedHeight(60)
         header.setObjectName("header")
         
         layout = QHBoxLayout()
-        layout.setContentsMargins(20, 15, 20, 15)
+        layout.setContentsMargins(20, 10, 20, 10)
         
         # Spacer to push buttons to the right
         layout.addStretch()
         
-        # Active Jobs/Debug button
-        self.btn_jobs_debug = QPushButton("Active Jobs/Debug")
-        self.btn_jobs_debug.setObjectName("headerButton")
-        self.btn_jobs_debug.clicked.connect(self._show_jobs_dialog)
-        layout.addWidget(self.btn_jobs_debug)
+        # Media Pool button - shows file processing queue
+        self.btn_media_pool = QPushButton("Media Pool")
+        self.btn_media_pool.setObjectName("headerButton")
+        self.btn_media_pool.clicked.connect(self._show_media_pool_dialog)
+        layout.addWidget(self.btn_media_pool)
+        
+        # Debug button
+        self.btn_debug = QPushButton("Debug")
+        self.btn_debug.setObjectName("headerButton")
+        self.btn_debug.clicked.connect(self._show_jobs_dialog)
+        layout.addWidget(self.btn_debug)
         
         # Settings button (gear icon)
         self.btn_settings = QPushButton("⚙")
@@ -330,10 +337,32 @@ class ClipABitApp(QWidget):
         self.search_input.setObjectName("searchInput")
         self.search_input.setPlaceholderText("Enter search query (e.g., 'woman walking', 'car driving')")
         self.search_input.returnPressed.connect(self._perform_search)
+        self.search_input.textChanged.connect(self._on_search_text_changed)
         layout.addWidget(self.search_input, 1)
+        
+        # Clear (X) button - hidden by default
+        self.btn_clear_search = QPushButton("✕")
+        self.btn_clear_search.setObjectName("clearSearchButton")
+        self.btn_clear_search.setFixedSize(30, 30)
+        self.btn_clear_search.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_clear_search.clicked.connect(self._clear_search)
+        self.btn_clear_search.hide()  # Hidden until there's text
+        layout.addWidget(self.btn_clear_search)
         
         container.setLayout(layout)
         return container
+    
+    def _on_search_text_changed(self, text):
+        """Show/hide clear button based on search text."""
+        if text:
+            self.btn_clear_search.show()
+        else:
+            self.btn_clear_search.hide()
+    
+    def _clear_search(self):
+        """Clear the search input and reset results."""
+        self.search_input.clear()
+        self._show_empty_state()
     
     def _apply_theme(self):
         """Apply the current theme stylesheet."""
@@ -352,17 +381,18 @@ class ClipABitApp(QWidget):
                 background-color: {t['background']};
             }}
             
-            /* Header button */
+            /* Header button - rectangular no rounding */
             QPushButton#headerButton {{
-                background-color: {t['card_bg']};
-                color: {t['text']};
+                background-color: #6B7280;
+                color: #FFFFFF;
                 border: none;
-                border-radius: 16px;
-                padding: 8px 16px;
+                border-radius: 0px;
+                padding: 10px 20px;
                 font-size: 13px;
+                font-weight: 500;
             }}
             QPushButton#headerButton:hover {{
-                background-color: {t['border']};
+                background-color: #5B6270;
             }}
             
             /* Settings button */
@@ -384,18 +414,18 @@ class ClipABitApp(QWidget):
                 padding: 20px;
             }}
             
-            /* Search container (pill shape) */
+            /* Search container - no rounding */
             QWidget#searchContainer {{
                 background-color: {t['search_bg']};
-                border-radius: 26px;
+                border-radius: 0px;
             }}
             
-            /* Search button */
+            /* Search button - rectangular orange */
             QPushButton#searchButton {{
                 background-color: {t['accent']};
                 color: {t['button_text']};
                 border: none;
-                border-radius: 22px;
+                border-radius: 0px;
                 font-size: 14px;
                 font-weight: 600;
             }}
@@ -415,11 +445,34 @@ class ClipABitApp(QWidget):
                 color: {t['search_placeholder']};
             }}
             
+            /* Clear search button (X) */
+            QPushButton#clearSearchButton {{
+                background-color: transparent;
+                color: {t['search_placeholder']};
+                border: none;
+                font-size: 16px;
+                font-weight: bold;
+            }}
+            QPushButton#clearSearchButton:hover {{
+                color: {t['search_text']};
+            }}
+            
             /* Empty state */
             QLabel#emptyState {{
                 color: {t['text_secondary']};
                 font-size: 16px;
                 padding: 100px;
+            }}
+            
+            /* Loading state */
+            QLabel#loadingSpinner {{
+                color: {t['text_secondary']};
+                font-size: 24px;
+                padding: 20px;
+            }}
+            QLabel#loadingText {{
+                color: {t['text_secondary']};
+                font-size: 16px;
             }}
             
             /* Status bar */
@@ -432,29 +485,28 @@ class ClipABitApp(QWidget):
             
             /* Result card */
             QFrame#resultCard {{
-                background-color: {t['card_bg']};
-                border-radius: 8px;
-                border: 1px solid {t['border']};
+                background-color: transparent;
+                border: none;
             }}
             
             /* Thumbnail placeholder */
             QLabel#thumbnail {{
                 background-color: #D9D9D9;
-                border-radius: 4px;
+                border-radius: 0px;
             }}
             
-            /* Add to timeline button */
+            /* Add to timeline button - light orange/yellow */
             QPushButton#addToTimelineBtn {{
-                background-color: {t['accent']};
-                color: {t['button_text']};
+                background-color: #F5D89A;
+                color: #1F2937;
                 border: none;
-                border-radius: 4px;
-                padding: 8px 16px;
-                font-size: 12px;
-                font-weight: 500;
+                border-radius: 0px;
+                padding: 10px 16px;
+                font-size: 13px;
+                font-weight: 400;
             }}
             QPushButton#addToTimelineBtn:hover {{
-                background-color: {t['accent_hover']};
+                background-color: #EBC878;
             }}
             
             /* Scroll area */
@@ -465,11 +517,11 @@ class ClipABitApp(QWidget):
             QScrollBar:vertical {{
                 background-color: {t['background']};
                 width: 8px;
-                border-radius: 4px;
+                border-radius: 0px;
             }}
             QScrollBar::handle:vertical {{
                 background-color: {t['border']};
-                border-radius: 4px;
+                border-radius: 0px;
                 min-height: 30px;
             }}
             QScrollBar::handle:vertical:hover {{
@@ -487,7 +539,7 @@ class ClipABitApp(QWidget):
                 background-color: {t['accent']};
                 color: {t['button_text']};
                 border: none;
-                border-radius: 8px;
+                border-radius: 0px;
                 padding: 10px 20px;
             }}
             QDialog QPushButton:hover {{
@@ -546,38 +598,275 @@ class ClipABitApp(QWidget):
         dialog.setLayout(layout)
         dialog.exec()
     
+    def _show_media_pool_dialog(self):
+        """Show the Media Pool dialog with file processing queue."""
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Media Pool")
+        dialog.setMinimumSize(600, 500)
+        
+        t = Theme.current
+        
+        layout = QVBoxLayout()
+        layout.setSpacing(10)
+        layout.setContentsMargins(20, 20, 20, 20)
+        
+        # Scrollable area for file list
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setStyleSheet(f"QScrollArea {{ border: none; background-color: {t['background']}; }}")
+        
+        scroll_content = QWidget()
+        self.media_pool_layout = QVBoxLayout()
+        self.media_pool_layout.setSpacing(15)
+        self.media_pool_layout.setContentsMargins(0, 0, 0, 0)
+        
+        # Add file items from queue
+        self._populate_media_pool_list()
+        
+        self.media_pool_layout.addStretch()
+        scroll_content.setLayout(self.media_pool_layout)
+        scroll.setWidget(scroll_content)
+        layout.addWidget(scroll)
+        
+        # Close button
+        close_btn = QPushButton("Close")
+        close_btn.clicked.connect(dialog.accept)
+        layout.addWidget(close_btn)
+        
+        dialog.setLayout(layout)
+        dialog.exec()
+    
+    def _populate_media_pool_list(self):
+        """Populate the media pool with file items."""
+        t = Theme.current
+        
+        # Clear existing items
+        for i in reversed(range(self.media_pool_layout.count())):
+            item = self.media_pool_layout.itemAt(i)
+            if item.widget():
+                item.widget().setParent(None)
+        
+        # Get files from upload queue
+        files_to_show = []
+        
+        # Add files from queue
+        for file_path in self.upload_queue:
+            files_to_show.append({
+                'path': file_path,
+                'name': os.path.basename(file_path),
+                'status': 'queued',
+                'progress': 0
+            })
+        
+        # Add processed files
+        for file_path in self.processed_files:
+            files_to_show.append({
+                'path': file_path,
+                'name': os.path.basename(file_path),
+                'status': 'complete',
+                'progress': 100
+            })
+        
+        if not files_to_show:
+            # Empty state container
+            empty_container = QWidget()
+            empty_layout = QVBoxLayout()
+            empty_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            empty_layout.setSpacing(20)
+            
+            # Empty state message
+            empty_label = QLabel("No files in media pool.")
+            empty_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            empty_label.setStyleSheet(f"color: {t['text_secondary']}; font-size: 14px;")
+            empty_layout.addWidget(empty_label)
+            
+            # Process Videos button - only shown when empty
+            process_btn = QPushButton("Process Videos")
+            process_btn.setFixedWidth(200)
+            process_btn.setStyleSheet(f"""
+                QPushButton {{
+                    background-color: {t['accent']};
+                    color: {t['button_text']};
+                    border: none;
+                    border-radius: 0px;
+                    padding: 12px 24px;
+                    font-size: 14px;
+                    font-weight: 500;
+                }}
+                QPushButton:hover {{
+                    background-color: {t['accent_hover']};
+                }}
+            """)
+            process_btn.clicked.connect(self._process_videos_from_resolve)
+            empty_layout.addWidget(process_btn, alignment=Qt.AlignmentFlag.AlignCenter)
+            
+            empty_container.setLayout(empty_layout)
+            self.media_pool_layout.addWidget(empty_container)
+            return
+        
+        for file_info in files_to_show:
+            item = self._create_media_pool_item(file_info)
+            self.media_pool_layout.addWidget(item)
+    
+    def _create_media_pool_item(self, file_info: Dict) -> QWidget:
+        """Create a media pool item widget matching Figma design."""
+        t = Theme.current
+        
+        container = QWidget()
+        layout = QHBoxLayout()
+        layout.setContentsMargins(10, 10, 10, 10)
+        layout.setSpacing(15)
+        
+        # Video file icon
+        icon_label = QLabel("🎬")
+        icon_label.setFixedSize(40, 40)
+        icon_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        icon_label.setStyleSheet(f"font-size: 24px;")
+        layout.addWidget(icon_label)
+        
+        # File info and progress
+        info_layout = QVBoxLayout()
+        info_layout.setSpacing(5)
+        
+        # Filename and percentage row
+        name_row = QHBoxLayout()
+        name_label = QLabel(file_info['name'])
+        name_label.setStyleSheet(f"font-size: 14px; font-weight: 500; color: {t['text']};")
+        name_row.addWidget(name_label)
+        name_row.addStretch()
+        
+        # Status/percentage
+        status = file_info['status']
+        progress = file_info['progress']
+        if status == 'complete':
+            status_text = "100%"
+            status_color = "#F5A623"  # Orange
+        elif status == 'error':
+            status_text = "error"
+            status_color = "#1F2937"
+        else:
+            status_text = f"{progress}%"
+            status_color = "#F5A623"
+        
+        status_label = QLabel(status_text)
+        status_label.setStyleSheet(f"font-size: 14px; color: {status_color};")
+        name_row.addWidget(status_label)
+        
+        info_layout.addLayout(name_row)
+        
+        # Progress bar
+        progress_bar = QProgressBar()
+        progress_bar.setFixedHeight(6)
+        progress_bar.setTextVisible(False)
+        progress_bar.setValue(progress)
+        
+        if status == 'error':
+            bar_color = "#E53935"  # Red
+        else:
+            bar_color = "#F5A623"  # Orange
+        
+        progress_bar.setStyleSheet(f"""
+            QProgressBar {{
+                background-color: #E0E0E0;
+                border: none;
+            }}
+            QProgressBar::chunk {{
+                background-color: {bar_color};
+            }}
+        """)
+        info_layout.addWidget(progress_bar)
+        
+        layout.addLayout(info_layout, 1)
+        
+        # Action button
+        if status == 'complete':
+            action_btn = QPushButton("🗑")
+            action_btn.setToolTip("Remove")
+            action_btn.clicked.connect(lambda: self._remove_from_processed(file_info['path']))
+        elif status == 'error':
+            action_btn = QPushButton("↻")
+            action_btn.setToolTip("Retry")
+            action_btn.setStyleSheet("color: #E53935;")
+        else:
+            action_btn = QPushButton("✕")
+            action_btn.setToolTip("Cancel")
+            action_btn.setStyleSheet("color: #F5A623;")
+            action_btn.clicked.connect(lambda: self._remove_from_queue(file_info['path']))
+        
+        action_btn.setFixedSize(30, 30)
+        action_btn.setStyleSheet(f"""
+            QPushButton {{
+                background-color: transparent;
+                border: none;
+                font-size: 18px;
+                color: {t['text_secondary']};
+            }}
+            QPushButton:hover {{
+                color: {t['text']};
+            }}
+        """)
+        layout.addWidget(action_btn)
+        
+        container.setLayout(layout)
+        return container
+    
+    def _remove_from_processed(self, file_path: str):
+        """Remove a file from the processed list."""
+        if file_path in self.processed_files:
+            self.processed_files.remove(file_path)
+        self._populate_media_pool_list()
+    
+    def _remove_from_queue(self, file_path: str):
+        """Remove a file from the upload queue."""
+        if file_path in self.upload_queue:
+            self.upload_queue.remove(file_path)
+        self._populate_media_pool_list()
+    
+    def _process_videos_from_resolve(self):
+        """Process videos from DaVinci Resolve's media pool."""
+        if not resolve:
+            # Fallback to file picker if Resolve is not available
+            files, _ = QFileDialog.getOpenFileNames(
+                self,
+                "Select Videos to Process",
+                "",
+                "Video Files (*.mp4 *.mov *.avi *.mkv);;All Files (*)"
+            )
+            
+            if files:
+                for f in files:
+                    if f not in self.upload_queue and f not in self.processed_files:
+                        self.upload_queue.append(f)
+                self._update_file_status()
+                self._populate_media_pool_list()
+            return
+        
+        # Get files from Resolve's media pool
+        self._refresh_media_pool(debug=False)
+        
+        files_added = 0
+        for entry in self.media_pool_clips:
+            file_path = entry.get('path', '')
+            if file_path and os.path.exists(file_path):
+                if file_path not in self.upload_queue and file_path not in self.processed_files:
+                    self.upload_queue.append(file_path)
+                    files_added += 1
+        
+        if files_added > 0:
+            self._update_file_status()
+            self._populate_media_pool_list()
+        else:
+            QMessageBox.information(self, "No New Files", "No new video files found in Resolve's media pool.")
+    
     def _show_settings_dialog(self):
-        """Show the Settings dialog with upload controls."""
+        """Show the Settings dialog."""
         dialog = QDialog(self)
         dialog.setWindowTitle("Settings")
-        dialog.setMinimumSize(450, 500)
+        dialog.setMinimumSize(400, 350)
         
         layout = QVBoxLayout()
         layout.setSpacing(15)
         layout.setContentsMargins(20, 20, 20, 20)
-        
-        # Upload section
-        upload_title = QLabel("Upload Media")
-        upload_title.setStyleSheet("font-size: 18px; font-weight: bold;")
-        layout.addWidget(upload_title)
-        
-        # File status
-        file_status = self._get_file_status_text()
-        self.dialog_file_status = QLabel(file_status)
-        self.dialog_file_status.setStyleSheet("color: #8E8E93;")
-        layout.addWidget(self.dialog_file_status)
-        
-        # Select Files button (white)
-        btn_select = QPushButton("Select Files to Upload")
-        btn_select.setStyleSheet("background-color: #FFFFFF; color: #000000;")
-        btn_select.clicked.connect(lambda: self._select_files_to_upload_dialog(dialog))
-        layout.addWidget(btn_select)
-        
-        # Divider
-        divider = QFrame()
-        divider.setFrameShape(QFrame.Shape.HLine)
-        divider.setStyleSheet("background-color: #4A4B52;")
-        layout.addWidget(divider)
         
         # Data Management section
         data_title = QLabel("Data Management")
@@ -591,12 +880,12 @@ class ClipABitApp(QWidget):
         layout.addWidget(btn_clear)
         
         # Divider
-        divider2 = QFrame()
-        divider2.setFrameShape(QFrame.Shape.HLine)
-        divider2.setStyleSheet("background-color: #4A4B52;")
-        layout.addWidget(divider2)
+        divider = QFrame()
+        divider.setFrameShape(QFrame.Shape.HLine)
+        divider.setStyleSheet("background-color: #4A4B52;")
+        layout.addWidget(divider)
         
-        # Appearance section (last)
+        # Appearance section
         theme_title = QLabel("Appearance")
         theme_title.setStyleSheet("font-size: 18px; font-weight: bold;")
         layout.addWidget(theme_title)
@@ -1582,6 +1871,52 @@ class ClipABitApp(QWidget):
             item = QListWidgetItem(item_text)
             self.jobs_list.addItem(item)
             
+    def _show_empty_state(self):
+        """Show the empty state message."""
+        # Clear previous results
+        for i in reversed(range(self.results_layout.count())):
+            item = self.results_layout.itemAt(i)
+            if item.widget():
+                item.widget().setParent(None)
+        
+        # Show empty state
+        if hasattr(self, 'empty_state_label'):
+            self.empty_state_label.show()
+            self.results_layout.addWidget(self.empty_state_label)
+    
+    def _show_loading_state(self):
+        """Show the loading/searching state."""
+        # Clear previous results
+        for i in reversed(range(self.results_layout.count())):
+            item = self.results_layout.itemAt(i)
+            if item.widget():
+                item.widget().setParent(None)
+        
+        # Hide empty state
+        if hasattr(self, 'empty_state_label'):
+            self.empty_state_label.hide()
+        
+        # Show loading indicator
+        loading_container = QWidget()
+        loading_layout = QVBoxLayout()
+        loading_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        
+        # Loading spinner (using text dots as placeholder)
+        loading_label = QLabel("●  ●  ●")
+        loading_label.setObjectName("loadingSpinner")
+        loading_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        loading_layout.addWidget(loading_label)
+        
+        # Loading text
+        searching_label = QLabel("searching...")
+        searching_label.setObjectName("loadingText")
+        searching_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        loading_layout.addWidget(searching_label)
+        
+        loading_container.setLayout(loading_layout)
+        self.results_layout.addWidget(loading_container)
+        self.results_layout.addStretch()
+    
     def _perform_search(self):
         """Perform semantic search."""
         query = self.search_input.text().strip()
@@ -1596,8 +1931,13 @@ class ClipABitApp(QWidget):
         project_safe = project_name.lower().replace(" ", "_")
         namespace = f"{user_id_safe}-{project_safe}"
         
+        # Show loading state
+        self._show_loading_state()
         self.status_label.setText(f"Searching for: {query}")
         self.btn_search.setEnabled(False)
+        
+        # Process events to update UI before blocking request
+        QApplication.processEvents()
         
         try:
             # Perform search using same approach as Streamlit
@@ -1612,10 +1952,12 @@ class ClipABitApp(QWidget):
             else:
                 QMessageBox.warning(self, "Search Error", f"Search failed: {response.status_code}\n{response.text}")
                 self.status_label.setText("Search failed")
+                self._show_empty_state()
                 
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Search failed: {str(e)}")
             self.status_label.setText("Search error")
+            self._show_empty_state()
         finally:
             self.btn_search.setEnabled(True)
             
@@ -1678,7 +2020,7 @@ class ClipABitApp(QWidget):
         
         card = QFrame()
         card.setObjectName("resultCard")
-        card.setFixedSize(280, 220)
+        card.setFixedSize(280, 180)
         
         layout = QVBoxLayout()
         layout.setSpacing(0)
@@ -1690,38 +2032,28 @@ class ClipABitApp(QWidget):
         start_time = metadata.get('start_time_s', 0)
         end_time = metadata.get('end_time_s', 0)
         
-        # Thumbnail placeholder
+        # Thumbnail placeholder - simple gray rectangle
         thumbnail = QLabel()
         thumbnail.setObjectName("thumbnail")
-        thumbnail.setFixedHeight(150)
+        thumbnail.setFixedHeight(140)
         thumbnail.setAlignment(Qt.AlignmentFlag.AlignCenter)
         # Show filename and time range on thumbnail
         thumbnail.setText(f"{filename[:20]}...\n{start_time:.1f}s - {end_time:.1f}s" if len(filename) > 20 else f"{filename}\n{start_time:.1f}s - {end_time:.1f}s")
-        thumbnail.setStyleSheet(f"""
+        thumbnail.setStyleSheet("""
             background-color: #D9D9D9;
             color: #666666;
             font-size: 11px;
-            border-top-left-radius: 8px;
-            border-top-right-radius: 8px;
+            border-radius: 0px;
         """)
         layout.addWidget(thumbnail)
         
-        # Button container
-        btn_container = QWidget()
-        btn_container.setFixedHeight(50)
-        btn_container.setStyleSheet(f"background-color: {t['card_bg']}; border-bottom-left-radius: 8px; border-bottom-right-radius: 8px;")
-        btn_layout = QHBoxLayout()
-        btn_layout.setContentsMargins(10, 5, 10, 10)
-        
-        # Add to timeline button
+        # Add to timeline button - full width below thumbnail
         btn_add = QPushButton("Add to timeline")
         btn_add.setObjectName("addToTimelineBtn")
+        btn_add.setFixedHeight(36)
         btn_add.setCursor(Qt.CursorShape.PointingHandCursor)
         btn_add.clicked.connect(lambda checked, r=result: self._add_result_to_timeline(r))
-        btn_layout.addWidget(btn_add)
-        
-        btn_container.setLayout(btn_layout)
-        layout.addWidget(btn_container)
+        layout.addWidget(btn_add)
         
         card.setLayout(layout)
         return card
