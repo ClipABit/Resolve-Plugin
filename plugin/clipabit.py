@@ -14,10 +14,9 @@ from typing import Dict, List, Optional
 try:
     from PyQt6.QtWidgets import (QApplication, QWidget, QVBoxLayout, QHBoxLayout,
                                  QLabel, QPushButton, QMessageBox, QLineEdit,
-                                 QScrollArea, QFrame, QSplitter, QListWidget, QListWidgetItem,
-                                 QDialog, QCheckBox, QGridLayout, QSizePolicy, QSpacerItem)
-    from PyQt6.QtCore import Qt, QTimer, QThread, pyqtSignal, QSize
-    from PyQt6.QtGui import QFont, QPixmap, QIcon
+                                 QScrollArea, QFrame, QListWidget, QListWidgetItem,
+                                 QDialog, QCheckBox, QGridLayout)
+    from PyQt6.QtCore import Qt, QTimer, QThread, pyqtSignal
 except ImportError as e:
     print(f"Error: PyQt6 not found or missing component: {e}")
     print("Please run 'pip install PyQt6'")
@@ -1686,7 +1685,6 @@ class ClipABitApp(QWidget):
         
         metadata = result.get('metadata', {})
         filename = metadata.get('file_filename', 'Unknown')
-        score = result.get('score', 0)
         start_time = metadata.get('start_time_s', 0)
         end_time = metadata.get('end_time_s', 0)
         
@@ -1697,7 +1695,7 @@ class ClipABitApp(QWidget):
         thumbnail.setAlignment(Qt.AlignmentFlag.AlignCenter)
         # Show filename and time range on thumbnail
         thumbnail.setText(f"{filename[:20]}...\n{start_time:.1f}s - {end_time:.1f}s" if len(filename) > 20 else f"{filename}\n{start_time:.1f}s - {end_time:.1f}s")
-        thumbnail.setStyleSheet(f"""
+        thumbnail.setStyleSheet("""
             background-color: #D9D9D9;
             color: #666666;
             font-size: 11px;
