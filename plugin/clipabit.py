@@ -15,11 +15,81 @@ try:
     from PyQt6.QtWidgets import (QApplication, QWidget, QVBoxLayout, QHBoxLayout,
                                  QLabel, QPushButton, QMessageBox, QLineEdit,
                                  QScrollArea, QFrame, QSplitter, QListWidget, QListWidgetItem,
-                                 QDialog, QCheckBox)
-    from PyQt6.QtCore import Qt, QTimer, QThread, pyqtSignal
-except ImportError:
-    print("Error: PyQt6 not found. Please run 'pip install PyQt6'")
+                                 QDialog, QCheckBox, QGridLayout, QSizePolicy, QSpacerItem)
+    from PyQt6.QtCore import Qt, QTimer, QThread, pyqtSignal, QSize
+    from PyQt6.QtGui import QFont, QPixmap, QIcon
+except ImportError as e:
+    print(f"Error: PyQt6 not found or missing component: {e}")
+    print("Please run 'pip install PyQt6'")
     sys.exit(1)
+
+# --- Theme Configuration ---
+class Theme:
+    """Color theme for the UI matching Figma design."""
+    
+    # Dark theme (default)
+    DARK = {
+        'background': '#26272E',
+        'card_bg': '#3A3B42',
+        'text': '#FFFFFF',
+        'text_secondary': '#8E8E93',
+        'accent': '#F5A623',
+        'accent_hover': '#E09000',
+        'search_bg': '#F2F8FF',
+        'search_text': '#000000',
+        'search_placeholder': '#8E8E93',
+        'button_text': '#000000',
+        'border': '#4A4B52',
+    }
+    
+    # Light theme
+    LIGHT = {
+        'background': '#FFFFFF',
+        'card_bg': '#E5E5E5',
+        'text': '#000000',
+        'text_secondary': '#8E8E93',
+        'accent': '#F5A623',
+        'accent_hover': '#E09000',
+        'search_bg': '#F2F8FF',
+        'search_text': '#000000',
+        'search_placeholder': '#8E8E93',
+        'button_text': '#000000',
+        'border': '#D0D0D0',
+    }
+    
+    # Current theme (can be toggled or auto-detected)
+    current = DARK
+    
+    @classmethod
+    def detect_system_theme(cls):
+        """Detect system theme (macOS/Windows) and set current theme accordingly."""
+        try:
+            if platform.system() == 'Darwin':  # macOS
+                # Check macOS appearance setting
+                import subprocess
+                result = subprocess.run(
+                    ['defaults', 'read', '-g', 'AppleInterfaceStyle'],
+                    capture_output=True, text=True
+                )
+                # If 'Dark' is returned, system is in dark mode
+                # If command fails (exit code != 0), system is in light mode
+                if result.returncode == 0 and 'Dark' in result.stdout:
+                    cls.current = cls.DARK
+                else:
+                    cls.current = cls.LIGHT
+            elif platform.system() == 'Windows':
+                # Check Windows registry for theme
+                import winreg
+                registry = winreg.ConnectRegistry(None, winreg.HKEY_CURRENT_USER)
+                key = winreg.OpenKey(registry, r'SOFTWARE\Microsoft\Windows\CurrentVersion\Themes\Personalize')
+                value, _ = winreg.QueryValueEx(key, 'AppsUseLightTheme')
+                cls.current = cls.LIGHT if value == 1 else cls.DARK
+            else:
+                # Default to dark for Linux/other
+                cls.current = cls.DARK
+        except Exception as e:
+            print(f"Could not detect system theme: {e}, defaulting to dark")
+            cls.current = cls.DARK
 
 # --- Configuration ---
 class Config:
@@ -134,10 +204,15 @@ class ClipABitApp(QWidget):
             self.clip_map = {}
             print("Running without Resolve API - clip map disabled")
         
+        # Detect system theme (macOS/Windows light/dark mode)
+        Theme.detect_system_theme()
+        
         # Setup UI
-        self.setWindowTitle("ClipABit Plugin (Resolve 20)")
-        self.resize(800, 600)
+        self.setWindowTitle("ClipABit - Search Videos")
+        self.resize(1000, 700)
+        self.setMinimumSize(800, 600)
         self.init_ui()
+        self._apply_theme()
         
         # Setup refresh timer (disabled by default; refresh on demand)
         self.refresh_timer = QTimer()
@@ -147,37 +222,436 @@ class ClipABitApp(QWidget):
         self._run_consistency_check("startup")
         
     def init_ui(self):
+        """Initialize the UI matching Figma design."""
         # Main layout
         main_layout = QVBoxLayout()
-        main_layout.setSpacing(10)
-        main_layout.setContentsMargins(15, 15, 15, 15)
+        main_layout.setSpacing(0)
+        main_layout.setContentsMargins(0, 0, 0, 0)
         
-        # Title
-        title_label = QLabel("<h2>ClipABit - Semantic Video Search</h2>")
-        title_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        main_layout.addWidget(title_label)
+        # Header bar with buttons (top-right)
+        header = self._create_header()
+        main_layout.addWidget(header)
         
-        # Create splitter for main content
-        splitter = QSplitter(Qt.Orientation.Horizontal)
+        # Content area
+        content = QWidget()
+        content_layout = QVBoxLayout()
+        content_layout.setSpacing(20)
+        content_layout.setContentsMargins(40, 20, 40, 40)
         
-        # Left panel - Upload and Jobs
-        left_panel = self._create_left_panel()
-        splitter.addWidget(left_panel)
+        # Title - "Search Videos"
+        self.title_label = QLabel("Search Videos")
+        self.title_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.title_label.setObjectName("mainTitle")
+        content_layout.addWidget(self.title_label)
         
-        # Right panel - Search and Results
-        right_panel = self._create_right_panel()
-        splitter.addWidget(right_panel)
+        # Search bar (pill-shaped)
+        search_container = self._create_search_bar()
+        content_layout.addWidget(search_container, alignment=Qt.AlignmentFlag.AlignCenter)
         
-        # Set splitter proportions
-        splitter.setSizes([300, 500])
-        main_layout.addWidget(splitter)
+        # Results area (grid or empty state)
+        self.results_container = QWidget()
+        self.results_layout = QVBoxLayout()
+        self.results_layout.setContentsMargins(0, 0, 0, 0)
+        self.results_container.setLayout(self.results_layout)
         
-        # Status bar
+        # Empty state label
+        self.empty_state_label = QLabel("no queries made yet.")
+        self.empty_state_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.empty_state_label.setObjectName("emptyState")
+        self.results_layout.addWidget(self.empty_state_label)
+        
+        # Scroll area for results
+        self.results_scroll = QScrollArea()
+        self.results_scroll.setWidgetResizable(True)
+        self.results_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        self.results_scroll.setWidget(self.results_container)
+        content_layout.addWidget(self.results_scroll, 1)
+        
+        content.setLayout(content_layout)
+        main_layout.addWidget(content, 1)
+        
+        # Status bar (minimal)
         self.status_label = QLabel("Ready")
-        self.status_label.setStyleSheet("color: gray; font-size: 10px; padding: 5px;")
+        self.status_label.setObjectName("statusBar")
         main_layout.addWidget(self.status_label)
         
         self.setLayout(main_layout)
+    
+    def _create_header(self):
+        """Create the header bar with logo, Active Jobs/Debug button and settings."""
+        header = QWidget()
+        header.setFixedHeight(80)
+        header.setObjectName("header")
+        
+        layout = QHBoxLayout()
+        layout.setContentsMargins(20, 15, 20, 15)
+        
+        # Spacer to push buttons to the right
+        layout.addStretch()
+        
+        # Active Jobs/Debug button
+        self.btn_jobs_debug = QPushButton("Active Jobs/Debug")
+        self.btn_jobs_debug.setObjectName("headerButton")
+        self.btn_jobs_debug.clicked.connect(self._show_jobs_dialog)
+        layout.addWidget(self.btn_jobs_debug)
+        
+        # Settings button (gear icon)
+        self.btn_settings = QPushButton("⚙")
+        self.btn_settings.setObjectName("settingsButton")
+        self.btn_settings.setFixedSize(40, 40)
+        self.btn_settings.clicked.connect(self._show_settings_dialog)
+        layout.addWidget(self.btn_settings)
+        
+        header.setLayout(layout)
+        return header
+    
+    def _create_search_bar(self):
+        """Create the pill-shaped search bar matching Figma design."""
+        container = QWidget()
+        container.setObjectName("searchContainer")
+        container.setFixedHeight(52)
+        container.setMinimumWidth(500)
+        container.setMaximumWidth(600)
+        
+        layout = QHBoxLayout()
+        layout.setContentsMargins(4, 4, 4, 4)
+        layout.setSpacing(0)
+        
+        # Search button (left side, inside the pill)
+        self.btn_search = QPushButton("Search")
+        self.btn_search.setObjectName("searchButton")
+        self.btn_search.setFixedSize(80, 44)
+        self.btn_search.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_search.clicked.connect(self._perform_search)
+        layout.addWidget(self.btn_search)
+        
+        # Search input
+        self.search_input = QLineEdit()
+        self.search_input.setObjectName("searchInput")
+        self.search_input.setPlaceholderText("Enter search query (e.g., 'woman walking', 'car driving')")
+        self.search_input.returnPressed.connect(self._perform_search)
+        layout.addWidget(self.search_input, 1)
+        
+        container.setLayout(layout)
+        return container
+    
+    def _apply_theme(self):
+        """Apply the current theme stylesheet."""
+        t = Theme.current
+        
+        self.setStyleSheet(f"""
+            /* Main window */
+            QWidget {{
+                background-color: {t['background']};
+                color: {t['text']};
+                font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            }}
+            
+            /* Header */
+            QWidget#header {{
+                background-color: {t['background']};
+            }}
+            
+            /* Header button */
+            QPushButton#headerButton {{
+                background-color: {t['card_bg']};
+                color: {t['text']};
+                border: none;
+                border-radius: 16px;
+                padding: 8px 16px;
+                font-size: 13px;
+            }}
+            QPushButton#headerButton:hover {{
+                background-color: {t['border']};
+            }}
+            
+            /* Settings button */
+            QPushButton#settingsButton {{
+                background-color: transparent;
+                color: {t['text_secondary']};
+                border: none;
+                font-size: 20px;
+            }}
+            QPushButton#settingsButton:hover {{
+                color: {t['text']};
+            }}
+            
+            /* Main title */
+            QLabel#mainTitle {{
+                font-size: 32px;
+                font-weight: bold;
+                color: {t['text']};
+                padding: 20px;
+            }}
+            
+            /* Search container (pill shape) */
+            QWidget#searchContainer {{
+                background-color: {t['search_bg']};
+                border-radius: 26px;
+            }}
+            
+            /* Search button */
+            QPushButton#searchButton {{
+                background-color: {t['accent']};
+                color: {t['button_text']};
+                border: none;
+                border-radius: 22px;
+                font-size: 14px;
+                font-weight: 600;
+            }}
+            QPushButton#searchButton:hover {{
+                background-color: {t['accent_hover']};
+            }}
+            
+            /* Search input */
+            QLineEdit#searchInput {{
+                background-color: transparent;
+                border: none;
+                color: {t['search_text']};
+                font-size: 14px;
+                padding: 0 15px;
+            }}
+            QLineEdit#searchInput::placeholder {{
+                color: {t['search_placeholder']};
+            }}
+            
+            /* Empty state */
+            QLabel#emptyState {{
+                color: {t['text_secondary']};
+                font-size: 16px;
+                padding: 100px;
+            }}
+            
+            /* Status bar */
+            QLabel#statusBar {{
+                color: {t['text_secondary']};
+                font-size: 11px;
+                padding: 8px 20px;
+                background-color: {t['background']};
+            }}
+            
+            /* Result card */
+            QFrame#resultCard {{
+                background-color: {t['card_bg']};
+                border-radius: 8px;
+                border: 1px solid {t['border']};
+            }}
+            
+            /* Thumbnail placeholder */
+            QLabel#thumbnail {{
+                background-color: #D9D9D9;
+                border-radius: 4px;
+            }}
+            
+            /* Add to timeline button */
+            QPushButton#addToTimelineBtn {{
+                background-color: {t['accent']};
+                color: {t['button_text']};
+                border: none;
+                border-radius: 4px;
+                padding: 8px 16px;
+                font-size: 12px;
+                font-weight: 500;
+            }}
+            QPushButton#addToTimelineBtn:hover {{
+                background-color: {t['accent_hover']};
+            }}
+            
+            /* Scroll area */
+            QScrollArea {{
+                border: none;
+                background-color: transparent;
+            }}
+            QScrollBar:vertical {{
+                background-color: {t['background']};
+                width: 8px;
+                border-radius: 4px;
+            }}
+            QScrollBar::handle:vertical {{
+                background-color: {t['border']};
+                border-radius: 4px;
+                min-height: 30px;
+            }}
+            QScrollBar::handle:vertical:hover {{
+                background-color: {t['text_secondary']};
+            }}
+            
+            /* Dialog styling */
+            QDialog {{
+                background-color: {t['background']};
+            }}
+            QDialog QLabel {{
+                color: {t['text']};
+            }}
+            QDialog QPushButton {{
+                background-color: {t['accent']};
+                color: {t['button_text']};
+                border: none;
+                border-radius: 8px;
+                padding: 10px 20px;
+            }}
+            QDialog QPushButton:hover {{
+                background-color: {t['accent_hover']};
+            }}
+        """)
+    
+    def _show_jobs_dialog(self):
+        """Show the Active Jobs/Debug dialog."""
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Active Jobs / Debug")
+        dialog.setMinimumSize(500, 400)
+        
+        layout = QVBoxLayout()
+        layout.setSpacing(15)
+        layout.setContentsMargins(20, 20, 20, 20)
+        
+        # Jobs section
+        jobs_title = QLabel("Active Jobs")
+        jobs_title.setStyleSheet("font-size: 18px; font-weight: bold;")
+        layout.addWidget(jobs_title)
+        
+        # Jobs list
+        self.dialog_jobs_list = QListWidget()
+        self.dialog_jobs_list.setMinimumHeight(150)
+        self._update_jobs_list_widget(self.dialog_jobs_list)
+        layout.addWidget(self.dialog_jobs_list)
+        
+        # Debug section
+        debug_title = QLabel("Debug Info")
+        debug_title.setStyleSheet("font-size: 18px; font-weight: bold;")
+        layout.addWidget(debug_title)
+        
+        # Storage path
+        storage_path = self._get_storage_path()
+        storage_label = QLabel(f"Storage: {storage_path}")
+        storage_label.setWordWrap(True)
+        storage_label.setStyleSheet("color: #8E8E93; font-size: 11px;")
+        layout.addWidget(storage_label)
+        
+        # Processed files count
+        processed_label = QLabel(f"Processed: {len(self.processed_files)} files")
+        processed_label.setStyleSheet("color: #8E8E93; font-size: 11px;")
+        layout.addWidget(processed_label)
+        
+        # Queue info
+        queue_label = QLabel(f"Upload Queue: {len(self.upload_queue)} files")
+        queue_label.setStyleSheet("color: #8E8E93; font-size: 11px;")
+        layout.addWidget(queue_label)
+        
+        # Close button
+        close_btn = QPushButton("Close")
+        close_btn.clicked.connect(dialog.accept)
+        layout.addWidget(close_btn)
+        
+        dialog.setLayout(layout)
+        dialog.exec()
+    
+    def _show_settings_dialog(self):
+        """Show the Settings dialog with upload controls."""
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Settings")
+        dialog.setMinimumSize(450, 500)
+        
+        layout = QVBoxLayout()
+        layout.setSpacing(15)
+        layout.setContentsMargins(20, 20, 20, 20)
+        
+        # Upload section
+        upload_title = QLabel("Upload Media")
+        upload_title.setStyleSheet("font-size: 18px; font-weight: bold;")
+        layout.addWidget(upload_title)
+        
+        # File status
+        file_status = self._get_file_status_text()
+        self.dialog_file_status = QLabel(file_status)
+        self.dialog_file_status.setStyleSheet("color: #8E8E93;")
+        layout.addWidget(self.dialog_file_status)
+        
+        # Select Files button (white)
+        btn_select = QPushButton("Select Files to Upload")
+        btn_select.setStyleSheet("background-color: #FFFFFF; color: #000000;")
+        btn_select.clicked.connect(lambda: self._select_files_to_upload_dialog(dialog))
+        layout.addWidget(btn_select)
+        
+        # Divider
+        divider = QFrame()
+        divider.setFrameShape(QFrame.Shape.HLine)
+        divider.setStyleSheet("background-color: #4A4B52;")
+        layout.addWidget(divider)
+        
+        # Data Management section
+        data_title = QLabel("Data Management")
+        data_title.setStyleSheet("font-size: 18px; font-weight: bold;")
+        layout.addWidget(data_title)
+        
+        # Clear processed files button (white)
+        btn_clear = QPushButton("Clear Processed Files")
+        btn_clear.setStyleSheet("background-color: #FFFFFF; color: #000000;")
+        btn_clear.clicked.connect(self._clear_processed_files)
+        layout.addWidget(btn_clear)
+        
+        # Divider
+        divider2 = QFrame()
+        divider2.setFrameShape(QFrame.Shape.HLine)
+        divider2.setStyleSheet("background-color: #4A4B52;")
+        layout.addWidget(divider2)
+        
+        # Appearance section (last)
+        theme_title = QLabel("Appearance")
+        theme_title.setStyleSheet("font-size: 18px; font-weight: bold;")
+        layout.addWidget(theme_title)
+        
+        # Theme toggle (white)
+        theme_btn = QPushButton("Toggle Dark/Light Mode")
+        theme_btn.setStyleSheet("background-color: #FFFFFF; color: #000000;")
+        theme_btn.clicked.connect(self._toggle_theme)
+        layout.addWidget(theme_btn)
+        
+        # Spacer
+        layout.addStretch()
+        
+        # Close button
+        close_btn = QPushButton("Close")
+        close_btn.clicked.connect(dialog.accept)
+        layout.addWidget(close_btn)
+        
+        dialog.setLayout(layout)
+        dialog.exec()
+    
+    def _toggle_theme(self):
+        """Toggle between dark and light themes."""
+        if Theme.current == Theme.DARK:
+            Theme.current = Theme.LIGHT
+        else:
+            Theme.current = Theme.DARK
+        self._apply_theme()
+    
+    def _get_file_status_text(self):
+        """Get the file status text for display."""
+        total = len(self.clip_map)
+        processed = len(self.processed_files)
+        new_files = total - processed
+        return f"Total: {total} files | Processed: {processed} | New: {new_files}"
+    
+    def _update_jobs_list_widget(self, list_widget):
+        """Update a jobs list widget with current jobs."""
+        list_widget.clear()
+        if not self.current_jobs and not self.upload_queue:
+            list_widget.addItem("No active jobs")
+        else:
+            for job_id, job_info in self.current_jobs.items():
+                filename = job_info.get('filename', 'Unknown')
+                list_widget.addItem(f"Processing: {filename}")
+            for file_info in self.upload_queue:
+                filename = file_info.get('filename', 'Unknown')
+                list_widget.addItem(f"Queued: {filename}")
+    
+    def _select_files_to_upload_dialog(self, dialog):
+        """Handle file selection from the settings dialog."""
+        self._select_files_to_upload()
+        # Update the dialog's file status
+        if hasattr(self, 'dialog_file_status'):
+            self.dialog_file_status.setText(self._get_file_status_text())
         
     def _create_left_panel(self):
         """Create the left panel with upload and job tracking."""
@@ -457,16 +931,25 @@ class ClipABitApp(QWidget):
             status_parts.append("uploading...")
             
         status_text = ", ".join(status_parts)
-        self.file_status_label.setText(status_text)
+        
+        # Update file status label if it exists (old UI)
+        if hasattr(self, 'file_status_label') and self.file_status_label:
+            self.file_status_label.setText(status_text)
+        
+        # Update status bar in new UI
+        if hasattr(self, 'status_label') and self.status_label:
+            self.status_label.setText(status_text)
         
         # Update processed files count in debug section
-        if hasattr(self, 'processed_count_label'):
+        if hasattr(self, 'processed_count_label') and self.processed_count_label:
             total_processed = len(self.processed_files)
             self.processed_count_label.setText(f"Processed: {total_processed} files")
         
-        # Update button states - disable during upload
-        self.btn_select_files.setEnabled(not self.is_uploading)
-        self.btn_clear_queue.setEnabled(queued_count > 0 or self.is_uploading)
+        # Update button states - disable during upload (if buttons exist)
+        if hasattr(self, 'btn_select_files') and self.btn_select_files:
+            self.btn_select_files.setEnabled(not self.is_uploading)
+        if hasattr(self, 'btn_clear_queue') and self.btn_clear_queue:
+            self.btn_clear_queue.setEnabled(queued_count > 0 or self.is_uploading)
         
     def _select_files_to_upload(self):
         """Select media pool clips and add them to the upload queue."""
@@ -1073,6 +1556,10 @@ class ClipABitApp(QWidget):
             
     def _update_jobs_display(self):
         """Update the jobs list display."""
+        # Only update if jobs_list exists (old UI)
+        if not hasattr(self, 'jobs_list') or not self.jobs_list:
+            return
+            
         self.jobs_list.clear()
         
         for job_id, job_info in self.current_jobs.items():
@@ -1133,37 +1620,69 @@ class ClipABitApp(QWidget):
             self.btn_search.setEnabled(True)
             
     def _display_search_results(self, results: List[Dict], query: str):
-        """Display search results."""
+        """Display search results in a grid layout matching Figma design."""
         # Clear previous results
         for i in reversed(range(self.results_layout.count())):
-            child = self.results_layout.itemAt(i).widget()
-            if child:
-                child.setParent(None)
+            item = self.results_layout.itemAt(i)
+            if item.widget():
+                item.widget().setParent(None)
+            elif item.layout():
+                # Clear nested layouts
+                self._clear_layout(item.layout())
+                
+        # Hide empty state label
+        if hasattr(self, 'empty_state_label'):
+            self.empty_state_label.hide()
                 
         if not results:
-            no_results = QLabel("No results found")
+            no_results = QLabel("No results found for your query.")
+            no_results.setObjectName("emptyState")
             no_results.setAlignment(Qt.AlignmentFlag.AlignCenter)
             self.results_layout.addWidget(no_results)
             return
-            
-        # Display results
-        for i, result in enumerate(results[:10]):  # Limit to top 10
-            result_widget = self._create_result_widget(result, i)
-            self.results_layout.addWidget(result_widget)
-            
+        
+        # Create grid layout for results
+        grid_container = QWidget()
+        grid_layout = QGridLayout()
+        grid_layout.setSpacing(20)
+        grid_layout.setContentsMargins(20, 20, 20, 20)
+        
+        # Display results in 3-column grid
+        num_columns = 3
+        for i, result in enumerate(results[:9]):  # Limit to 9 for 3x3 grid
+            result_widget = self._create_result_card(result, i)
+            row = i // num_columns
+            col = i % num_columns
+            grid_layout.addWidget(result_widget, row, col)
+        
+        grid_container.setLayout(grid_layout)
+        self.results_layout.addWidget(grid_container)
+        
         # Add stretch to push results to top
         self.results_layout.addStretch()
+    
+    def _clear_layout(self, layout):
+        """Recursively clear a layout."""
+        if layout is None:
+            return
+        while layout.count():
+            item = layout.takeAt(0)
+            if item.widget():
+                item.widget().setParent(None)
+            elif item.layout():
+                self._clear_layout(item.layout())
         
-    def _create_result_widget(self, result: Dict, index: int) -> QWidget:
-        """Create a widget for a single search result."""
-        widget = QFrame()
-        widget.setFrameStyle(QFrame.Shape.Box)
-        widget.setMaximumHeight(120)
+    def _create_result_card(self, result: Dict, index: int) -> QWidget:
+        """Create a card widget for a single search result matching Figma design."""
+        t = Theme.current
         
-        layout = QHBoxLayout()
+        card = QFrame()
+        card.setObjectName("resultCard")
+        card.setFixedSize(280, 220)
         
-        # Result info
-        info_layout = QVBoxLayout()
+        layout = QVBoxLayout()
+        layout.setSpacing(0)
+        layout.setContentsMargins(0, 0, 0, 0)
         
         metadata = result.get('metadata', {})
         filename = metadata.get('file_filename', 'Unknown')
@@ -1171,27 +1690,46 @@ class ClipABitApp(QWidget):
         start_time = metadata.get('start_time_s', 0)
         end_time = metadata.get('end_time_s', 0)
         
-        # Title
-        title_label = QLabel(f"<b>{filename}</b>")
-        info_layout.addWidget(title_label)
+        # Thumbnail placeholder
+        thumbnail = QLabel()
+        thumbnail.setObjectName("thumbnail")
+        thumbnail.setFixedHeight(150)
+        thumbnail.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        # Show filename and time range on thumbnail
+        thumbnail.setText(f"{filename[:20]}...\n{start_time:.1f}s - {end_time:.1f}s" if len(filename) > 20 else f"{filename}\n{start_time:.1f}s - {end_time:.1f}s")
+        thumbnail.setStyleSheet(f"""
+            background-color: #D9D9D9;
+            color: #666666;
+            font-size: 11px;
+            border-top-left-radius: 8px;
+            border-top-right-radius: 8px;
+        """)
+        layout.addWidget(thumbnail)
         
-        # Details
-        details = f"Score: {score:.3f} | Time: {start_time:.1f}s - {end_time:.1f}s"
-        details_label = QLabel(details)
-        details_label.setStyleSheet("color: gray; font-size: 10px;")
-        info_layout.addWidget(details_label)
+        # Button container
+        btn_container = QWidget()
+        btn_container.setFixedHeight(50)
+        btn_container.setStyleSheet(f"background-color: {t['card_bg']}; border-bottom-left-radius: 8px; border-bottom-right-radius: 8px;")
+        btn_layout = QHBoxLayout()
+        btn_layout.setContentsMargins(10, 5, 10, 10)
         
         # Add to timeline button
-        btn_add = QPushButton("Add to Timeline")
-        btn_add.setMaximumWidth(120)
-        btn_add.clicked.connect(lambda: self._add_result_to_timeline(result))
+        btn_add = QPushButton("Add to timeline")
+        btn_add.setObjectName("addToTimelineBtn")
+        btn_add.setCursor(Qt.CursorShape.PointingHandCursor)
+        btn_add.clicked.connect(lambda checked, r=result: self._add_result_to_timeline(r))
+        btn_layout.addWidget(btn_add)
         
-        layout.addLayout(info_layout)
-        layout.addStretch()
-        layout.addWidget(btn_add)
+        btn_container.setLayout(btn_layout)
+        layout.addWidget(btn_container)
         
-        widget.setLayout(layout)
-        return widget
+        card.setLayout(layout)
+        return card
+    
+    # Keep old method for backward compatibility
+    def _create_result_widget(self, result: Dict, index: int) -> QWidget:
+        """Create a widget for a single search result (legacy)."""
+        return self._create_result_card(result, index)
         
     def _add_result_to_timeline(self, result: Dict):
         """Add a search result to the timeline."""
