@@ -17,15 +17,26 @@ def main() -> int:
 
     pyproject_path = Path("plugin/pyproject.toml")
     text = pyproject_path.read_text(encoding="utf-8")
-    updated, count = re.subn(
-        r'(?m)^version\\s*=\\s*"[^"]+"',
-        f'version = "{version}"',
-        text,
-        count=1,
-    )
-    if count != 1:
+    lines = text.splitlines(keepends=True)
+    updated_lines = []
+    in_project = False
+    replaced = False
+
+    for line in lines:
+        stripped = line.lstrip("\ufeff").strip()
+        if stripped.startswith("[") and stripped.endswith("]"):
+            in_project = stripped == "[project]"
+        if in_project and stripped.startswith("version") and "=" in stripped and not replaced:
+            indent = line[: len(line) - len(line.lstrip("\ufeff "))]
+            line = f'{indent}version = "{version}"\n'
+            replaced = True
+        updated_lines.append(line)
+
+    if not replaced:
         print("Failed to find version in plugin/pyproject.toml.")
         return 1
+
+    updated = "".join(updated_lines)
 
     pyproject_path.write_text(updated, encoding="utf-8")
     return 0
