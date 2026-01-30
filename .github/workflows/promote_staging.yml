@@ -52,7 +52,8 @@ jobs:
       - name: merge staging into main
         run: |
           git fetch origin staging
-          git merge --no-ff origin/staging -m "chore: promote staging to main"
+          git -c user.name="github-actions[bot]" -c user.email="github-actions[bot]@users.noreply.github.com" \
+            merge --no-ff origin/staging -m "chore: promote staging to main"
           git push origin HEAD:main
 
       - name: setup python
