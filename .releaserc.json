@@ -47,6 +47,7 @@
     [
       "@semantic-release/exec",
       {
+        "analyzeCommitsCmd": "python scripts/release_type.py",
         "prepareCmd": "python scripts/bump_version.py ${nextRelease.version}"
       }
     ],
