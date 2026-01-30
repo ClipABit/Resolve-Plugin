@@ -145,6 +145,22 @@ Set the `CLIPABIT_ENVIRONMENT` environment variable:
 | **Windows** | `%APPDATA%\Blackmagic Design\DaVinci Resolve\Support\Fusion\Scripts\Utility\` |
 | **Linux** | `~/.local/share/DaVinci Resolve/Fusion/Scripts/Edit/` |
 
+## Release Flow (Automated)
+
+### Staging prereleases
+- Pushes to `staging` run semantic-release automatically.
+- Tags are created as `vX.Y.Z-staging.N`.
+- `plugin/CHANGELOG.md` and `plugin/pyproject.toml` are updated.
+
+### Promote to main (manual trigger)
+- Use GitHub Actions workflow **Promote staging to main**.
+- It asks for **release type** (`patch`, `minor`, `major`).
+- It merges `staging` → `main`, then runs semantic-release on `main` with the chosen release type.
+
+### Permissions probe
+- Run **Permissions Probe** workflow to verify whether `GITHUB_TOKEN` has write access.
+- If it fails, org-level settings likely block write permissions.
+
 ## Troubleshooting
 
 ### Scripts Menu Shows "No Scripts"
