@@ -6,6 +6,7 @@ dependencies = [
     "pyqt6>=6.10.0",
     "requests>=2.31.0",
     "watchdog>=3.0.0",
+    "polling2>=0.5.0",
 ]
 
 [dependency-groups]
