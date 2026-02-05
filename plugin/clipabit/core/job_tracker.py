@@ -1,4 +1,5 @@
 from PyQt6.QtCore import QThread, pyqtSignal
+from threading import Lock
 import requests
 import time
 import traceback
@@ -14,18 +15,24 @@ class JobTracker(QThread):
     def __init__(self):
         super().__init__()
         self.jobs_to_track = {}  # job_id -> job_info
+        self.lock = Lock()
         self.running = True
         
     def add_job(self, job_id: str, job_info: dict):
         """Add a job to track."""
-        self.jobs_to_track[job_id] = job_info
+        with self.lock:
+            self.jobs_to_track[job_id] = job_info
         
     def run(self):
         """Main tracking loop."""
         while self.running:
             jobs_to_remove = []
             
-            for job_id, job_info in self.jobs_to_track.items():
+            # Create a copy to iterate safely
+            with self.lock:
+                current_jobs = dict(self.jobs_to_track)
+            
+            for job_id, job_info in current_jobs.items():
                 try:
                     response = requests.get(Config.STATUS_API_URL, params={"job_id": job_id}, timeout=Config.STATUS_CHECK_TIMEOUT)
                     if response.status_code == 200:
@@ -45,8 +52,12 @@ class JobTracker(QThread):
                     print(error_msg)
                     
             # Remove completed/failed jobs
-            for job_id in jobs_to_remove:
-                del self.jobs_to_track[job_id]
+            if jobs_to_remove:
+                with self.lock:
+                    for job_id in jobs_to_remove:
+                        # Check existance as it might have been removed elsewhere
+                        if job_id in self.jobs_to_track:
+                            del self.jobs_to_track[job_id]
                 
             time.sleep(Config.STATUS_CHECK_INTERVAL)
             

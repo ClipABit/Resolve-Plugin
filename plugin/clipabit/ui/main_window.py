@@ -27,6 +27,8 @@ from ..core.utils import (
     get_storage_path, load_processed_files, save_processed_files,
     get_file_hash, get_hashed_identifier
 )
+from ..core.job_tracker import JobTracker
+from ..core.uploader import FileUploader
 from .theme import Theme
 
 # --- Setup Resolve API Globals ---
@@ -596,8 +598,16 @@ class ClipABitApp(QWidget):
             self.status_label.setText(status_text)
             
         # Update dialog status label if open
-        if hasattr(self, 'dialog_file_status') and self.dialog_file_status and self.dialog_file_status.isVisible():
-            self.dialog_file_status.setText(status_text)
+        try:
+            if hasattr(self, 'dialog_file_status') and self.dialog_file_status is not None:
+                # Check isVisible() might throw RuntimeError if underlying object is deleted
+                if self.dialog_file_status.isVisible():
+                    self.dialog_file_status.setText(status_text)
+        except RuntimeError:
+            # The widget gave up the ghost (was deleted C++ side)
+            self.dialog_file_status = None
+        except Exception:
+            pass
         
     def _select_files_to_upload(self):
         """Select media pool clips and add them to the upload queue."""
@@ -796,216 +806,132 @@ class ClipABitApp(QWidget):
         # Update UI
         remaining = len(self.upload_queue)
         filename = file_info['filename']
-        self.status_label.setText(f"Uploading: {filename} ({remaining} remaining in queue)")
+        self.status_label.setText(f"Starting upload: {filename} ({remaining} remaining)")
         
-        # Build namespace from user_id and project_name
+        # Build namespace
         user_id = self.get_or_create_device_id()
         project_name = self.get_project_name() or "default"
-        
-        # Simple namespace format: user_id-project_name (sanitized)
         user_id_safe = user_id.lower().replace(" ", "_")
         project_safe = project_name.lower().replace(" ", "_")
         namespace = f"{user_id_safe}-{project_safe}"
         
-        # Upload the file
-        self._upload_single_file(file_info, namespace)
-            
-    def _upload_single_file(self, file_info: Dict, namespace: str, retry_count: int = 0, max_retries: int = 3):
-        """Upload a single file to the backend with retry logic."""
-        filepath = file_info['filepath']
-        filename = file_info['filename']
-        file_hash = file_info['hash']
-        
+        # Start background uploader thread
+        self.current_uploader_thread = FileUploader(file_info, namespace)
+        self.current_uploader_thread.upload_started.connect(self._on_upload_started)
+        self.current_uploader_thread.upload_progress.connect(self._on_upload_progress)
+        self.current_uploader_thread.upload_success.connect(self._on_upload_success)
+        self.current_uploader_thread.upload_failed.connect(self._on_upload_error)
+        self.current_uploader_thread.finished.connect(self.current_uploader_thread.deleteLater)
+        self.current_uploader_thread.start()
+
+    def _on_upload_started(self, filename: str):
+        """Handle upload start."""
+        self.status_label.setText(f"Uploading: {filename}...")
+
+    def _on_upload_progress(self, filename: str, msg: str):
+        """Handle upload progress message."""
+        self.status_label.setText(msg)
+
+    def _on_upload_success(self, filename: str, file_hash: str, result: dict):
+        """Handle successful upload from background thread."""
         try:
-            if retry_count > 0:
-                print(f"[Upload] Retry attempt {retry_count}/{max_retries} for {filename}")
-            else:
-                print(f"[Upload] Starting upload for {filename}")
+            job_id = result.get("job_id")
+            print(f"[Upload] ✅ Upload successful, job_id: {job_id}")
             
-            # Get file size first
-            file_size = os.path.getsize(filepath)
-            file_size_mb = file_size / (1024 * 1024)
-                
-            # Upload to backend - use file object directly for streaming
-            # This is more memory efficient and may help with connection stability
-            with open(filepath, 'rb') as f:
-                # FastAPI expects files as a list - use list of tuples format
-                files_data = [("files", (filename, f, "video/mp4"))]
-                data = {"namespace": namespace}
-                
-                self.status_label.setText(f"Uploading {filename}... (attempt {retry_count + 1})")
-                print(f"[Upload] Sending POST request to {Config.UPLOAD_API_URL}")
-                
-                # Use a session for better connection management
-                session = requests.Session()
-                # Increase timeout for larger files (calculate based on file size)
-                # Allow at least 1 minute per MB, minimum 60 seconds, max 10 minutes
-                upload_timeout = min(600, max(60, int(file_size_mb * 60)))
-                
-                response = session.post(
-                    Config.UPLOAD_API_URL, 
-                    files=files_data, 
-                    data=data, 
-                    timeout=upload_timeout,
-                    stream=False  # Don't stream response, we need the full response
-                )
-            
-            print(f"[Upload] Response status: {response.status_code}")
-            
-            if response.status_code == 200:
-                result = response.json()
-                job_id = result.get("job_id")
-                
-                if job_id:
-                    print(f"[Upload] ✅ Upload successful, job_id: {job_id}")
-                    temp_job_id = f"queued_{file_hash[:8]}"
-                    if temp_job_id in self.current_jobs:
-                        del self.current_jobs[temp_job_id]
-                    # Replace temp job with real job
-                    job_info = {
-                        'filename': filename,
-                        'filepath': filepath,
-                        'file_hash': file_hash,
-                        'status': 'processing',
-                        'namespace': namespace
-                    }
-                    
-                    self.current_jobs[job_id] = job_info
-                    self.job_tracker.add_job(job_id, job_info)
-                    self._update_jobs_display()
-                    
-                    self.status_label.setText(f"Upload started: {filename}")
-                else:
-                    error_msg = f"Upload failed for {filename}: No job ID returned. Response: {result}"
-                    print(f"[Upload] ❌ {error_msg}")
-                    QMessageBox.warning(self, "Error", error_msg)
-                    # Continue with next upload even if this one failed
-                    self._on_upload_completed(False)
-            else:
-                error_msg = f"Upload failed for {filename}: HTTP {response.status_code}\n{response.text}"
-                print(f"[Upload] ❌ {error_msg}")
-                QMessageBox.warning(self, "Error", error_msg)
-                temp_job_id = f"queued_{file_hash[:8]}"
-                if temp_job_id in self.current_jobs:
-                    del self.current_jobs[temp_job_id]
-                # Continue with next upload even if this one failed
-                self._on_upload_completed(False)
-                
-        except (requests.exceptions.ConnectionError, requests.exceptions.ProtocolError) as e:
-            # Retry connection errors with exponential backoff
-            if retry_count < max_retries:
-                wait_time = (2 ** retry_count) * 2  # 2, 4, 8 seconds
-                error_msg = f"Connection error uploading {filename} (attempt {retry_count + 1}/{max_retries + 1}): {str(e)}"
-                print(f"[Upload] ⚠️ {error_msg}")
-                print(f"[Upload] Retrying in {wait_time} seconds...")
-                self.status_label.setText(f"Connection error, retrying in {wait_time}s...")
-                
-                # Wait before retry
-                time.sleep(wait_time)
-                
-                # Retry the upload
-                self._upload_single_file(file_info, namespace, retry_count + 1, max_retries)
-            else:
-                error_msg = f"Connection error uploading {filename} after {max_retries + 1} attempts: {str(e)}"
-                print(f"[Upload] ❌ {error_msg}")
-                print(traceback.format_exc())
-                temp_job_id = f"queued_{file_hash[:8]}"
-                if temp_job_id in self.current_jobs:
-                    del self.current_jobs[temp_job_id]
-                QMessageBox.critical(self, "Network Error", f"{error_msg}\n\nPlease check your internet connection and try again.")
-                self._on_upload_completed(False)
-        except requests.exceptions.Timeout as e:
-            # Retry timeout errors too
-            if retry_count < max_retries:
-                wait_time = (2 ** retry_count) * 2
-                error_msg = f"Upload timeout for {filename} (attempt {retry_count + 1}/{max_retries + 1})"
-                print(f"[Upload] ⚠️ {error_msg}")
-                print(f"[Upload] Retrying in {wait_time} seconds...")
-                self.status_label.setText(f"Timeout, retrying in {wait_time}s...")
-                
-                time.sleep(wait_time)
-                
-                self._upload_single_file(file_info, namespace, retry_count + 1, max_retries)
-            else:
-                error_msg = f"Upload timeout for {filename} after {max_retries + 1} attempts: {str(e)}"
-                print(f"[Upload] ❌ {error_msg}")
-                print(traceback.format_exc())
-                temp_job_id = f"queued_{file_hash[:8]}"
-                if temp_job_id in self.current_jobs:
-                    del self.current_jobs[temp_job_id]
-                QMessageBox.critical(self, "Upload Timeout", f"{error_msg}\n\nFile may be too large or connection too slow.")
-                self._on_upload_completed(False)
-        except requests.exceptions.RequestException as e:
-            error_msg = f"Network error uploading {filename}: {str(e)}"
-            print(f"[Upload] ❌ {error_msg}")
-            print(traceback.format_exc())
+            # Cleanup temp job
             temp_job_id = f"queued_{file_hash[:8]}"
             if temp_job_id in self.current_jobs:
                 del self.current_jobs[temp_job_id]
-            QMessageBox.critical(self, "Network Error", error_msg)
-            self._on_upload_completed(False)
-        except FileNotFoundError as e:
-            error_msg = f"File not found: {filepath}\n{str(e)}"
-            print(f"[Upload] ❌ {error_msg}")
-            print(traceback.format_exc())
-            temp_job_id = f"queued_{file_hash[:8]}"
-            if temp_job_id in self.current_jobs:
-                del self.current_jobs[temp_job_id]
-            QMessageBox.critical(self, "File Error", error_msg)
-            self._on_upload_completed(False)
+                
+            # Create real job entry
+            filepath = self.current_upload['filepath'] if self.current_upload else ""
+            namespace = self.current_uploader_thread.namespace if hasattr(self, 'current_uploader_thread') else ""
+            
+            job_info = {
+                'filename': filename,
+                'filepath': filepath,
+                'file_hash': file_hash,
+                'status': 'processing',
+                'namespace': namespace
+            }
+            
+            self.current_jobs[job_id] = job_info
+            self.job_tracker.add_job(job_id, job_info)
+            self._update_jobs_display()
+            self._update_file_status()  # Update UI to reflect changes
+            
+            self.status_label.setText(f"Upload started: {filename}")
+            
+            # Continue with next upload
+            self._on_upload_completed(True)
         except Exception as e:
-            error_msg = f"Failed to upload {filename}: {str(e)}"
-            print(f"[Upload] ❌ {error_msg}")
-            print(traceback.format_exc())
-            temp_job_id = f"queued_{file_hash[:8]}"
-            if temp_job_id in self.current_jobs:
-                del self.current_jobs[temp_job_id]
-            QMessageBox.critical(self, "Error", error_msg)
+            err_msg = f"Critical error in upload success handler: {e}\n{traceback.format_exc()}"
+            print(err_msg)
+            QMessageBox.critical(self, "Plugin Error", f"An error occurred after upload:\n{e}")
             self._on_upload_completed(False)
+
+    def _on_upload_error(self, filename: str, file_hash: str, error_msg: str):
+        """Handle upload failure from background thread."""
+        print(f"[Upload] ❌ Error: {error_msg}")
+        
+        temp_job_id = f"queued_{file_hash[:8]}"
+        if temp_job_id in self.current_jobs:
+            del self.current_jobs[temp_job_id]
+            
+        QMessageBox.warning(self, "Upload Error", f"Failed to upload {filename}:\n{error_msg}")
+        
+        # Continue with next upload even if failed
+        self._on_upload_completed(False)
             
     def _on_job_completed(self, job_id: str, result: dict):
         """Handle job completion."""
-        if job_id in self.current_jobs:
-            job_info = self.current_jobs[job_id]
-            filename = job_info['filename']
-            filepath = job_info['filepath']
-            file_hash = job_info['file_hash']
-            namespace = job_info['namespace']
-            hashed_identifier = self._get_hashed_identifier(filepath, namespace, filename)
-            expected_vectors = None
-            try:
-                if isinstance(result, dict) and result.get("chunks") is not None:
-                    expected_vectors = int(result.get("chunks"))
-            except (TypeError, ValueError):
+        try:
+            if job_id in self.current_jobs:
+                job_info = self.current_jobs[job_id]
+                filename = job_info['filename']
+                filepath = job_info['filepath']
+                file_hash = job_info['file_hash']
+                namespace = job_info['namespace']
+                hashed_identifier = self._get_hashed_identifier(filepath, namespace, filename)
                 expected_vectors = None
-            
-            # Mark file as processed (keep existing tracking)
-            self.processed_files[file_hash] = {
-                'filename': filename,
-                'filepath': filepath,
-                'job_id': job_id,
-                'namespace': namespace,
-                'hashed_identifier': hashed_identifier,
-                'processed_at': time.time(),
-                'result': result,
-                'backend_miss_count': 0,
-                'last_backend_check': None,
-                'expected_vector_count': expected_vectors,
-                'vector_count': expected_vectors
-            }
-            self._save_processed_files()
-            
-            # Remove from current jobs
-            del self.current_jobs[job_id]
-            self._update_jobs_display()
-            self._update_file_status()
-            
-            self.status_label.setText(f"Completed: {filename}")
-            print(f"✅ Job {job_id} completed successfully for {filename}")
-            
-            # Continue with next upload in queue
-            self._on_upload_completed(True)
-            # Skip immediate consistency check; backend counts can lag right after upload
+                try:
+                    if isinstance(result, dict) and result.get("chunks") is not None:
+                        expected_vectors = int(result.get("chunks"))
+                except (TypeError, ValueError):
+                    expected_vectors = None
+                
+                # Mark file as processed (keep existing tracking)
+                self.processed_files[file_hash] = {
+                    'filename': filename,
+                    'filepath': filepath,
+                    'job_id': job_id,
+                    'namespace': namespace,
+                    'hashed_identifier': hashed_identifier,
+                    'processed_at': time.time(),
+                    'result': result,
+                    'backend_miss_count': 0,
+                    'last_backend_check': None,
+                    'expected_vector_count': expected_vectors,
+                    'vector_count': expected_vectors
+                }
+                self._save_processed_files()
+                
+                # Remove from current jobs
+                del self.current_jobs[job_id]
+                self._update_jobs_display()
+                self._update_file_status()
+                
+                self.status_label.setText(f"Completed: {filename}")
+                print(f"✅ Job {job_id} completed successfully for {filename}")
+                
+                # Continue with next upload in queue
+                self._on_upload_completed(True)
+                # Skip immediate consistency check; backend counts can lag right after upload
+        except Exception as e:
+            err_msg = f"Critical error in job completion: {e}\n{traceback.format_exc()}"
+            print(err_msg)
+            QMessageBox.critical(self, "Plugin Error", f"An error occurred while finishing the job:\n{e}")
+            self._on_upload_completed(False)
             
     def _on_job_failed(self, job_id: str, error: str):
         """Handle job failure."""

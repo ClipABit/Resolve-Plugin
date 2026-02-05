@@ -5,29 +5,39 @@ import hashlib
 from pathlib import Path
 from typing import Dict
 
+import inspect
+
 def get_storage_path() -> Path:
-    """Get path for local storage."""
+    """Get path for local storage, robust to Resolve environment."""
     try:
-        # In a normal Python script
+        # standard approach
         script_path = Path(__file__).resolve()
-    except Exception:
-        # Fallback or when frozen/embedded
-        script_arg = sys.argv[0] if len(sys.argv) > 0 else ""
-        if script_arg:
-            script_path = Path(script_arg)
-            if not script_path.is_absolute():
-                script_path = (Path.cwd() / script_arg).resolve()
-        else:
-            script_path = Path.cwd()
-    
-    # We want to store data relative to the package or user home
-    # For simplicity, let's store it in a standard location or relative to the parent plugin folder
-    # If this is inside clipabit/core/utils.py, parent.parent.parent is the root
-    
-    # Actually, the original logic put it relative to the script
-    # We should probably use a user directory for robustness
-    # But to match original behavior logic:
-    return script_path.parent / "localstorage" / "processed_files.json"
+    except NameError:
+        # Resolve 'script' environment
+        try:
+            script_path = Path(inspect.getfile(inspect.currentframe())).resolve()
+        except Exception:
+            # Fallback to user home if we can't find our own path
+            # This ensures we always have a writable location
+            user_home = Path(os.path.expanduser("~"))
+            storage_dir = user_home / ".clipabit" / "localstorage"
+            storage_dir.mkdir(parents=True, exist_ok=True)
+            return storage_dir / "processed_files.json"
+
+    # If we found the script path, store relative to it (but ensure parents exist)
+    # We navigate up from plugin/clipabit/core/utils.py to plugin/clipabit/localstorage
+    # script_path.parent = core
+    # script_path.parent.parent = clipabit
+    storage_dir = script_path.parent.parent / "localstorage"
+    try:
+        storage_dir.mkdir(parents=True, exist_ok=True)
+    except PermissionError:
+        # Fallback if package dir is read-only
+        user_home = Path(os.path.expanduser("~"))
+        storage_dir = user_home / ".clipabit" / "localstorage"
+        storage_dir.mkdir(parents=True, exist_ok=True)
+        
+    return storage_dir / "processed_files.json"
 
 def load_processed_files(storage_path: Path = None) -> Dict[str, Dict]:
     """Load list of processed files from local storage."""
