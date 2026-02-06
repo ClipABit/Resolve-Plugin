@@ -6,6 +6,7 @@ import json
 import time
 import traceback
 import platform
+import webbrowser
 from pathlib import Path
 from typing import Dict, List, Optional
 
@@ -13,13 +14,16 @@ try:
     from PyQt6.QtWidgets import (QApplication, QWidget, QVBoxLayout, QHBoxLayout,
                                  QLabel, QPushButton, QMessageBox, QLineEdit,
                                  QScrollArea, QFrame, QListWidget, QListWidgetItem,
-                                 QDialog, QCheckBox, QGridLayout, QProgressBar)
+                                 QDialog, QCheckBox, QGridLayout, QProgressBar,
+                                 QStackedWidget, QGraphicsOpacityEffect)
     from PyQt6.QtCore import Qt, QTimer, QThread, pyqtSignal
     from PyQt6.QtSvgWidgets import QSvgWidget
 except ImportError as e:
     print(f"Error: PyQt6 not found or missing component: {e}")
     # We can't exit here if imported by shim, but let's assume environment is good
     pass
+
+import hashlib
 
 # Local imports
 from ..api.config import Config
@@ -92,6 +96,16 @@ class ClipABitApp(QWidget):
         # Detect system theme (macOS/Windows light/dark mode)
         Theme.detect_system_theme()
         
+        # Auth state management
+        self.auth_token = None
+        self.is_authenticated = False
+        self.device_code = None
+        self.user_code = None
+        self.auth_polling_timer = None
+        
+        # Load stored auth token
+        self._load_auth_token()
+        
         # Setup UI
         self.setWindowTitle("ClipABit")
         self.resize(1000, 700)
@@ -107,18 +121,50 @@ class ClipABitApp(QWidget):
         self._run_consistency_check("startup")
         
     def init_ui(self):
-        """Initialize the UI matching Figma design."""
         # Main layout
         main_layout = QVBoxLayout()
         main_layout.setSpacing(0)
         main_layout.setContentsMargins(0, 0, 0, 0)
         
-        # Header bar with buttons (top-right)
-        header = self._create_header()
-        main_layout.addWidget(header)
+        # Header bar with buttons (top-right) - shown on all screens
+        self.header = self._create_header()
+        main_layout.addWidget(self.header)
         
-        # Content area
-        content = QWidget()
+        # Stacked widget for different screens
+        self.stacked_widget = QStackedWidget()
+        
+        # Page 0: Welcome screen (auth flow start)
+        self.welcome_page = self._create_welcome_screen()
+        self.stacked_widget.addWidget(self.welcome_page)
+        
+        # Page 1: Device code screen
+        self.device_code_page = self._create_device_code_screen()
+        self.stacked_widget.addWidget(self.device_code_page)
+        
+        # Page 2: Main search/results screen
+        self.search_page = self._create_search_screen()
+        self.stacked_widget.addWidget(self.search_page)
+        
+        main_layout.addWidget(self.stacked_widget, 1)
+        
+        # Status bar (minimal) - shown on all screens
+        self.status_label = QLabel("Ready")
+        self.status_label.setObjectName("statusBar")
+        main_layout.addWidget(self.status_label)
+        
+        self.setLayout(main_layout)
+        
+        # Set initial page based on auth state
+        if self.is_authenticated:
+            self.stacked_widget.setCurrentIndex(2)  # Show search screen
+            self.status_label.setText("Ready")
+        else:
+            self.stacked_widget.setCurrentIndex(0)  # Show welcome screen
+            self.status_label.setText("Welcome to ClipABit")
+
+    def _create_search_screen(self):
+        """Create the main search/results screen (original UI)."""
+        page = QWidget()
         content_layout = QVBoxLayout()
         content_layout.setSpacing(20)
         content_layout.setContentsMargins(40, 20, 40, 40)
@@ -138,7 +184,7 @@ class ClipABitApp(QWidget):
         logo_container.setLayout(logo_layout)
         content_layout.addWidget(logo_container)
         
-        # Search bar (pill-shaped)
+        # Search bar (rectangular)
         search_container = self._create_search_bar()
         content_layout.addWidget(search_container, alignment=Qt.AlignmentFlag.AlignCenter)
         
@@ -155,16 +201,318 @@ class ClipABitApp(QWidget):
         self.results_scroll.setWidget(self.results_container)
         content_layout.addWidget(self.results_scroll, 1)
         
-        content.setLayout(content_layout)
-        main_layout.addWidget(content, 1)
+        page.setLayout(content_layout)
+        return page
+
+    def _create_welcome_screen(self):
+        """Create the welcome screen (Screen 1 in Figma) - auth flow start."""
+        t = Theme.current
+        page = QWidget()
         
-        # Status bar (minimal)
-        self.status_label = QLabel("Ready")
-        self.status_label.setObjectName("statusBar")
-        main_layout.addWidget(self.status_label)
+        layout = QVBoxLayout()
+        layout.setSpacing(0)
+        layout.setContentsMargins(40, 40, 40, 40)
         
-        self.setLayout(main_layout)
-    
+        # Add stretch to center content vertically
+        layout.addStretch(2)
+        
+        # Logo - ClipABit SVG (larger for welcome)
+        self.welcome_logo_widget = QSvgWidget()
+        self.welcome_logo_widget.setFixedSize(200, 80)
+        self._update_welcome_logo()
+        
+        # Center the logo
+        logo_container = QWidget()
+        logo_layout = QHBoxLayout()
+        logo_layout.setContentsMargins(0, 0, 0, 0)
+        logo_layout.addStretch()
+        logo_layout.addWidget(self.welcome_logo_widget)
+        logo_layout.addStretch()
+        logo_container.setLayout(logo_layout)
+        layout.addWidget(logo_container)
+        
+        # Spacer
+        layout.addSpacing(20)
+        
+        # Tagline
+        tagline = QLabel("Search by ideas, not timestamps.")
+        tagline.setObjectName("welcomeTagline")
+        tagline.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(tagline)
+        
+        # Spacer
+        layout.addSpacing(40)
+        
+        # Get Started button
+        btn_container = QWidget()
+        btn_layout = QHBoxLayout()
+        btn_layout.setContentsMargins(0, 0, 0, 0)
+        btn_layout.addStretch()
+        
+        self.btn_get_started = QPushButton("Get Started")
+        self.btn_get_started.setObjectName("getStartedButton")
+        self.btn_get_started.setFixedSize(200, 50)
+        self.btn_get_started.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_get_started.clicked.connect(self._on_get_started_clicked)
+        btn_layout.addWidget(self.btn_get_started)
+        
+        btn_layout.addStretch()
+        btn_container.setLayout(btn_layout)
+        layout.addWidget(btn_container)
+        
+        # Add stretch to center content vertically
+        layout.addStretch(3)
+        
+        page.setLayout(layout)
+        return page
+
+    def _create_device_code_screen(self):
+        t = Theme.current
+        page = QWidget()
+        
+        layout = QVBoxLayout()
+        layout.setSpacing(0)
+        layout.setContentsMargins(40, 40, 40, 40)
+        
+        # Add stretch to center content vertically
+        layout.addStretch(2)
+        
+        # Header with URL
+        header_label = QLabel('Follow these steps on <a href="https://clipabit.web.app">https://clipabit.web.app</a>')
+        header_label.setObjectName("deviceCodeHeader")
+        header_label.setOpenExternalLinks(True)  # Make the link clickable
+        header_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(header_label)
+        
+        # Spacer
+        layout.addSpacing(40)
+        
+        # Steps container - centered
+        steps_container = QWidget()
+        steps_container.setFixedWidth(400)
+        steps_layout = QVBoxLayout()
+        steps_layout.setSpacing(25)
+        steps_layout.setContentsMargins(0, 0, 0, 0)
+        
+        # Step 1: Sign up
+        step1_row = QHBoxLayout()
+        step1_row.setSpacing(15)
+        
+        step1_badge = QLabel("1")
+        step1_badge.setObjectName("stepBadge")
+        step1_badge.setFixedSize(32, 32)
+        step1_badge.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        step1_row.addWidget(step1_badge)
+        
+        step1_text_layout = QVBoxLayout()
+        step1_text_layout.setSpacing(4)
+        step1_label = QLabel("Sign up OR sign in to your account.")
+        step1_label.setObjectName("stepLabel")
+        step1_text_layout.addWidget(step1_label)
+        step1_row.addLayout(step1_text_layout)
+        step1_row.addStretch()
+        
+        steps_layout.addLayout(step1_row)
+        
+        # Step 2: Confirm code
+        step2_row = QHBoxLayout()
+        step2_row.setSpacing(15)
+        
+        step2_badge = QLabel("2")
+        step2_badge.setObjectName("stepBadge")
+        step2_badge.setFixedSize(32, 32)
+        step2_badge.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        step2_row.addWidget(step2_badge)
+        
+        step2_text_layout = QVBoxLayout()
+        step2_text_layout.setSpacing(4)
+        step2_label = QLabel("Confirm this code in the dashboard to access the plugin.")
+        step2_label.setObjectName("stepLabel")
+        step2_text_layout.addWidget(step2_label)
+        step2_row.addLayout(step2_text_layout)
+        step2_row.addStretch()
+        
+        steps_layout.addLayout(step2_row)
+        
+        # Code display box
+        self.code_display = QLabel("----")
+        self.code_display.setObjectName("codeDisplay")
+        self.code_display.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.code_display.setFixedHeight(80)
+        steps_layout.addWidget(self.code_display)
+        
+        # Waiting message
+        self.waiting_label = QLabel("Waiting for authorization...")
+        self.waiting_label.setObjectName("waitingLabel")
+        self.waiting_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        steps_layout.addWidget(self.waiting_label)
+        
+        steps_container.setLayout(steps_layout)
+        
+        # Center the steps container
+        center_layout = QHBoxLayout()
+        center_layout.addStretch()
+        center_layout.addWidget(steps_container)
+        center_layout.addStretch()
+        layout.addLayout(center_layout)
+        
+        # Add stretch to center content vertically
+        layout.addStretch(3)
+        
+        page.setLayout(layout)
+        return page
+
+    def _update_welcome_logo(self):
+        """Update the welcome screen logo based on current theme."""
+        t = Theme.current
+        if t == Theme.DARK:
+            logo_path = os.path.join(os.path.dirname(__file__), '..', '..', 'assets', 'logo-dark.svg')
+        else:
+            logo_path = os.path.join(os.path.dirname(__file__), '..', '..', 'assets', 'logo-light.svg')
+        
+        if hasattr(self, 'welcome_logo_widget') and os.path.exists(logo_path):
+            self.welcome_logo_widget.load(logo_path)
+
+    def _on_get_started_clicked(self):
+        """Handle 'Get Started' button click - request device code."""
+        self.btn_get_started.setEnabled(False)
+        self.btn_get_started.setText("Loading...")
+        self.status_label.setText("Requesting device code...")
+        
+        try:
+            # Request device code from backend
+            response = requests.post(Config.DEVICE_CODE_URL, timeout=30)
+            
+            if response.status_code == 200:
+                result = response.json()
+                self.device_code = result.get("device_code")
+                self.user_code = result.get("user_code", "----")
+                
+                if self.device_code and self.user_code:
+                    # Update the code display
+                    self.code_display.setText(self.user_code)
+                    
+                    # Switch to device code screen
+                    self.stacked_widget.setCurrentIndex(1)
+                    self.status_label.setText(f"Enter code {self.user_code} at clipabit.app")
+                    
+                    # Start polling for authorization
+                    self._start_auth_polling()
+                    
+                    # Auto-open browser to sign-in page
+                    webbrowser.open("https://clipabit.web.app/sign-in")
+                else:
+                    QMessageBox.warning(self, "Error", "Invalid response from server. Please try again.")
+                    self.btn_get_started.setEnabled(True)
+                    self.btn_get_started.setText("Get Started")
+            else:
+                QMessageBox.warning(self, "Error", f"Failed to get device code: {response.status_code}\n{response.text}")
+                self.btn_get_started.setEnabled(True)
+                self.btn_get_started.setText("Get Started")
+                
+        except requests.exceptions.RequestException as e:
+            QMessageBox.critical(self, "Network Error", f"Failed to connect to server:\n{str(e)}")
+            self.btn_get_started.setEnabled(True)
+            self.btn_get_started.setText("Get Started")
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"An error occurred:\n{str(e)}")
+            self.btn_get_started.setEnabled(True)
+            self.btn_get_started.setText("Get Started")
+        
+        self.status_label.setText("Ready")
+
+    def _start_auth_polling(self):
+        """Start polling for auth token."""
+        if self.auth_polling_timer:
+            self.auth_polling_timer.stop()
+        
+        self.auth_polling_timer = QTimer()
+        self.auth_polling_timer.timeout.connect(self._poll_for_auth_token)
+        self.auth_polling_timer.start(5000)  # Poll every 5 seconds
+        print("[Auth] Started polling for authorization")
+
+    def _stop_auth_polling(self):
+        """Stop polling for auth token."""
+        if self.auth_polling_timer:
+            self.auth_polling_timer.stop()
+            self.auth_polling_timer = None
+        print("[Auth] Stopped polling")
+
+    def _poll_for_auth_token(self):
+        """Poll the backend to check if user has authorized."""
+        if not self.device_code:
+            self._stop_auth_polling()
+            return
+        
+        try:
+            response = requests.post(
+                Config.DEVICE_POLL_URL,
+                json={"device_code": self.device_code},
+                timeout=10
+            )
+            
+            if response.status_code == 200:
+                result = response.json()
+                status = result.get("status", "pending")
+                
+                if status == "authorized" or status == "success":
+                    # User has authorized - get the token
+                    token = result.get("access_token") or result.get("token")
+                    if token:
+                        self._stop_auth_polling()
+                        self._save_auth_token(token)
+                        
+                        # Clear device code state
+                        self.device_code = None
+                        self.user_code = None
+                        
+                        # Transition to search screen
+                        self.stacked_widget.setCurrentIndex(2)
+                        self.status_label.setText("Authenticated! Ready to search.")
+                        print("[Auth] Successfully authorized")
+                    else:
+                        print("[Auth] Authorized but no token in response")
+                        
+                elif status == "pending":
+                    # Still waiting - update UI
+                    self.waiting_label.setText("Waiting for authorization...")
+                    print("[Auth] Still pending authorization")
+                    
+                elif status == "expired":
+                    # Device code expired
+                    self._stop_auth_polling()
+                    QMessageBox.warning(
+                        self,
+                        "Code Expired",
+                        "The device code has expired. Please try again."
+                    )
+                    # Go back to welcome screen
+                    self.stacked_widget.setCurrentIndex(0)
+                    self.btn_get_started.setEnabled(True)
+                    self.btn_get_started.setText("Get Started")
+                    self.device_code = None
+                    self.user_code = None
+                    
+            elif response.status_code == 400:
+                # Bad request - might be expired or invalid
+                result = response.json() if response.text else {}
+                error = result.get("error", "")
+                if "expired" in error.lower():
+                    self._stop_auth_polling()
+                    QMessageBox.warning(self, "Code Expired", "The device code has expired. Please try again.")
+                    self.stacked_widget.setCurrentIndex(0)
+                    self.btn_get_started.setEnabled(True)
+                    self.btn_get_started.setText("Get Started")
+                    self.device_code = None
+                    self.user_code = None
+                    
+        except requests.exceptions.RequestException as e:
+            print(f"[Auth] Poll request failed: {e}")
+            # Don't stop polling on network error, will retry next interval
+            self.waiting_label.setText("Connection error, retrying...")
+        except Exception as e:
+            print(f"[Auth] Poll error: {e}")
+
     def _create_header(self):
         """Create the header bar with Media Pool, Debug buttons and settings."""
         header = QWidget()
@@ -496,6 +844,71 @@ class ClipABitApp(QWidget):
             }}
             QDialog QPushButton:hover {{
                 background-color: {t['accent_hover']};
+            }}
+            
+            /* Auth screen styles */
+            QLabel#welcomeTagline {{
+                color: {t['welcome_text']};
+                font-size: 18px;
+                font-weight: 300;
+            }}
+            
+            QPushButton#getStartedButton {{
+                background-color: {t['accent']};
+                color: {t['button_text']};
+                border: none;
+                border-radius: 0px;
+                font-size: 16px;
+                font-weight: 400;
+            }}
+            QPushButton#getStartedButton:hover {{
+                background-color: {t['accent_hover']};
+            }}
+            QPushButton#getStartedButton:disabled {{
+                background-color: #CCCCCC;
+                color: #666666;
+            }}
+            
+            QLabel#stepBadge {{
+                background-color: {t['step_badge_bg']};
+                color: {t['step_badge_text']};
+                font-size: 16px;
+                font-weight: 400;
+                border-radius: 16px;
+            }}
+            
+            QLabel#stepLabel {{
+                color: {t['text']};
+                font-size: 16px;
+                font-weight: 300;
+            }}
+            
+            QLabel#stepUrl {{
+                color: {t['light_border']};
+                font-size: 14px;
+                font-weight: 300;
+            }}
+            
+            QLabel#codeDisplay {{
+                background-color: {t['code_bg']};
+                color: #000000;
+                font-size: 36px;
+                font-weight: 400;
+                font-family: 'Courier New', monospace;
+                border-radius: 0px;
+                padding: 20px;
+            }}
+            
+            QLabel#waitingLabel {{
+                color: {t['text_secondary']};
+                font-size: 14px;
+                font-weight: 300;
+            }}
+            
+            QLabel#deviceCodeHeader {{
+                color: {t['text']};
+                font-size: 18px;
+                font-weight: 400;
             }}
         """)
     
@@ -842,6 +1255,7 @@ class ClipABitApp(QWidget):
             Theme.current = Theme.DARK
         self._apply_theme()
         self._update_logo()
+        self._update_welcome_logo()
     
     def _get_file_status_text(self):
         """Get the file status text for display."""
@@ -1470,12 +1884,16 @@ class ClipABitApp(QWidget):
         grid_layout.setSpacing(20)
         grid_layout.setContentsMargins(20, 20, 20, 20)
         
-        # Display results in 3-column grid
+        # Display results in 3-column grid with fading opacity per row
+        # Row 0: 100%, Row 1: 70%, Row 2: 30%
         num_columns = 3
+        row_opacities = [1.0, 0.7, 0.3]
+        
         for i, result in enumerate(results[:9]):  # Limit to 9 for 3x3 grid
-            result_widget = self._create_result_card(result, i)
             row = i // num_columns
             col = i % num_columns
+            opacity = row_opacities[row] if row < len(row_opacities) else 0.3
+            result_widget = self._create_result_card(result, i, opacity)
             grid_layout.addWidget(result_widget, row, col)
         
         grid_container.setLayout(grid_layout)
@@ -1495,13 +1913,25 @@ class ClipABitApp(QWidget):
             elif item.layout():
                 self._clear_layout(item.layout())
         
-    def _create_result_card(self, result: Dict, index: int) -> QWidget:
-        """Create a card widget for a single search result matching Figma design."""
+    def _create_result_card(self, result: Dict, index: int, opacity: float = 1.0) -> QWidget:
+        """Create a card widget for a single search result matching Figma design.
+        
+        Args:
+            result: Search result dictionary
+            index: Index of the result
+            opacity: Opacity value (0.0 to 1.0) for fading effect
+        """
         t = Theme.current
         
         card = QFrame()
         card.setObjectName("resultCard")
         card.setFixedSize(280, 220)
+        
+        # Apply opacity effect using QGraphicsOpacityEffect
+        from PyQt6.QtWidgets import QGraphicsOpacityEffect
+        opacity_effect = QGraphicsOpacityEffect()
+        opacity_effect.setOpacity(opacity)
+        card.setGraphicsEffect(opacity_effect)
         
         layout = QVBoxLayout()
         layout.setSpacing(0)
@@ -1549,9 +1979,9 @@ class ClipABitApp(QWidget):
         return card
     
     # Keep old method for backward compatibility
-    def _create_result_widget(self, result: Dict, index: int) -> QWidget:
+    def _create_result_widget(self, result: Dict, index: int, opacity: float = 1.0) -> QWidget:
         """Create a widget for a single search result (legacy)."""
-        return self._create_result_card(result, index)
+        return self._create_result_card(result, index, opacity)
     def _add_result_to_timeline(self, result: Dict):
         """Add a search result to the timeline."""
         if not resolve:
@@ -1975,6 +2405,60 @@ class ClipABitApp(QWidget):
             base = xdg if xdg else str(Path.home() / ".config")
             return Path(base) / "clipabit" / "device_id.txt"
 
+    def _get_auth_token_path(self) -> Path:
+        """Return a platform-appropriate path to persist the auth token."""
+        system = platform.system()
+        if system == "Windows":
+            base = os.getenv("APPDATA") or str(Path.home())
+            return Path(base) / "ClipABit" / "auth_token.txt"
+        elif system == "Darwin":
+            return Path.home() / "Library" / "Application Support" / "ClipABit" / "auth_token.txt"
+        else:
+            xdg = os.getenv("XDG_CONFIG_HOME")
+            base = xdg if xdg else str(Path.home() / ".config")
+            return Path(base) / "clipabit" / "auth_token.txt"
+
+    def _load_auth_token(self):
+        """Load stored auth token if it exists."""
+        path = self._get_auth_token_path()
+        try:
+            if path.exists():
+                text = path.read_text(encoding="utf-8").strip()
+                if text:
+                    self.auth_token = text
+                    self.is_authenticated = True
+                    print("[Auth] Loaded stored auth token")
+                    return
+        except Exception as e:
+            print(f"[Auth] Failed to load auth token: {e}")
+        
+        self.auth_token = None
+        self.is_authenticated = False
+
+    def _save_auth_token(self, token: str):
+        """Save auth token to persistent storage."""
+        path = self._get_auth_token_path()
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(token, encoding="utf-8")
+            self.auth_token = token
+            self.is_authenticated = True
+            print("[Auth] Auth token saved successfully")
+        except Exception as e:
+            print(f"[Auth] Failed to save auth token: {e}")
+
+    def _clear_auth_token(self):
+        """Clear stored auth token (logout)."""
+        path = self._get_auth_token_path()
+        try:
+            if path.exists():
+                path.unlink()
+        except Exception as e:
+            print(f"[Auth] Failed to clear auth token: {e}")
+        
+        self.auth_token = None
+        self.is_authenticated = False
+
     def get_or_create_device_id(self, persist: bool = True) -> str:
         """Get a persistent device id, create and store one if missing.
 
@@ -2243,6 +2727,8 @@ class ClipABitApp(QWidget):
             self.job_tracker.wait()
         if hasattr(self, 'refresh_timer'):
             self.refresh_timer.stop()
+        if hasattr(self, 'auth_polling_timer') and self.auth_polling_timer:
+            self.auth_polling_timer.stop()
         event.accept()
 
 def main(resolve_api=None):

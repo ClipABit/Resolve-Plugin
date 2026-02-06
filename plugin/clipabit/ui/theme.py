@@ -16,6 +16,11 @@ class Theme:
         'search_placeholder': '#8E8E93',
         'button_text': '#000000',
         'border': '#4A4B52',
+        'light_border': '#4A4B52',
+        'welcome_text': '#8E8E93',
+        'code_bg': '#D9D9D9',
+        'step_badge_bg': '#F5A623',
+        'step_badge_text': '#000000',
     }
     
     # Light theme
@@ -31,6 +36,11 @@ class Theme:
         'search_placeholder': '#8E8E93',
         'button_text': '#000000',
         'border': '#D0D0D0',
+        'light_border': '#189FD1',
+        'welcome_text': '#8E8E93',
+        'code_bg': '#D9D9D9',
+        'step_badge_bg': '#F5A623',
+        'step_badge_text': '#000000',
     }
     
     # Current theme (can be toggled or auto-detected)
