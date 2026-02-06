@@ -32,6 +32,5 @@ jobs:
 
       - name: lint
         run: ruff check plugin/clipabitshim.py plugin/clipabit/ watch_clipabit.py
-
       - name: syntax check
         run: python -m compileall plugin/clipabitshim.py plugin/clipabit/ watch_clipabit.py
