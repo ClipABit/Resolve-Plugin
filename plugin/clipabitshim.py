@@ -55,8 +55,8 @@ except ImportError as e:
         if not app:
             app = QApplication(sys.argv)
         QMessageBox.critical(None, "Import Error", f"Failed to load ClipABit plugin:\n{e}")
-    except Exception:
-        pass
+    except Exception as dialog_e:
+        print(f"Failed to show error dialog: {dialog_e}")
     sys.exit(1)
 
 if __name__ == "__main__":

@@ -17,8 +17,8 @@ try:
     from PyQt6.QtCore import Qt, QTimer
 except ImportError as e:
     print(f"Error: PyQt6 not found or missing component: {e}")
-    # We can't exit here if imported by shim, but let's assume environment is good
-    pass
+    # We can't exit here if imported by shim, but we log the issue
+    print("Warning: PyQt6 import failed in main_window.py")
 
 # Local imports
 from ..api.config import Config
@@ -605,8 +605,8 @@ class ClipABitApp(QWidget):
         except RuntimeError:
             # The widget gave up the ghost (was deleted C++ side)
             self.dialog_file_status = None
-        except Exception:
-            pass
+        except Exception as e:
+            print(f"[UI] Error updating file status: {e}")
         
     def _select_files_to_upload(self):
         """Select media pool clips and add them to the upload queue."""
