@@ -2,23 +2,23 @@ import sys
 import os
 import requests
 import uuid
-import json
 import time
 import traceback
 import platform
+import hashlib
 from pathlib import Path
 from typing import Dict, List, Optional
 
 try:
     from PyQt6.QtWidgets import (QApplication, QWidget, QVBoxLayout, QHBoxLayout,
                                  QLabel, QPushButton, QMessageBox, QLineEdit,
-                                 QScrollArea, QFrame, QListWidget, QListWidgetItem,
+                                 QScrollArea, QFrame, QListWidget,
                                  QDialog, QCheckBox, QGridLayout)
-    from PyQt6.QtCore import Qt, QTimer, QThread, pyqtSignal
+    from PyQt6.QtCore import Qt, QTimer
 except ImportError as e:
     print(f"Error: PyQt6 not found or missing component: {e}")
-    # We can't exit here if imported by shim, but let's assume environment is good
-    pass
+    # We can't exit here if imported by shim, but we log the issue
+    print("Warning: PyQt6 import failed in main_window.py")
 
 # Local imports
 from ..api.config import Config
@@ -27,7 +27,6 @@ from ..core.utils import (
     get_storage_path, load_processed_files, save_processed_files,
     get_file_hash, get_hashed_identifier
 )
-from ..core.job_tracker import JobTracker
 from ..core.uploader import FileUploader
 from .theme import Theme
 
@@ -606,8 +605,8 @@ class ClipABitApp(QWidget):
         except RuntimeError:
             # The widget gave up the ghost (was deleted C++ side)
             self.dialog_file_status = None
-        except Exception:
-            pass
+        except Exception as e:
+            print(f"[UI] Error updating file status: {e}")
         
     def _select_files_to_upload(self):
         """Select media pool clips and add them to the upload queue."""
@@ -1810,7 +1809,6 @@ class ClipABitApp(QWidget):
             filename = info.get("filename", "")
             filepath = info.get("filepath", "")
             namespace = info.get("namespace")
-            expected_count = info.get("expected_vector_count")
 
             if not namespace:
                 user_id = self.get_or_create_device_id()
@@ -1819,7 +1817,6 @@ class ClipABitApp(QWidget):
                 project_safe = project_name.lower().replace(" ", "_")
                 namespace = f"{user_id_safe}-{project_safe}"
 
-            hashed_identifier = info.get("hashed_identifier") or self._get_hashed_identifier(filepath, namespace, filename)
 
             checked_count += 1
 

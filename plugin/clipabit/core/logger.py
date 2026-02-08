@@ -1,5 +1,4 @@
 import os
-import sys
 import datetime
 import threading
 
@@ -49,7 +48,8 @@ class Logger:
                 self.log_file = os.path.join(tmp_dir, "clipabit_fallback.log")
                 with open(self.log_file, "a") as f:
                     f.write(f"\n=== Log Session Started (Fallback): {datetime.datetime.now()} ===\nOriginal error: {e}\n")
-            except:
+            except Exception as fallback_e:
+                print(f"Fallback logging also failed: {fallback_e}")
                 self.log_file = None
 
     def _write(self, level, message):
