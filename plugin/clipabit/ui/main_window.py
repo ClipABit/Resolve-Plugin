@@ -457,7 +457,7 @@ class ClipABitApp(QWidget):
                 
                 if status == "authorized" or status == "success":
                     # User has authorized - get the token
-                    token = result.get("access_token") or result.get("token")
+                    token = result.get("id_token") or result.get("access_token") or result.get("token")
                     if token:
                         self._stop_auth_polling()
                         self._save_auth_token(token)
