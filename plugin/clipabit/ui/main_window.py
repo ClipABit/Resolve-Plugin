@@ -154,13 +154,9 @@ class ClipABitApp(QWidget):
         
         self.setLayout(main_layout)
         
-        # Set initial page based on auth state
-        if self.is_authenticated:
-            self.stacked_widget.setCurrentIndex(2)  # Show search screen
-            self.status_label.setText("Ready")
-        else:
-            self.stacked_widget.setCurrentIndex(0)  # Show welcome screen
-            self.status_label.setText("Welcome to ClipABit")
+        # Set initial page - always show login flow (steps 1 & 2)
+        self.stacked_widget.setCurrentIndex(0)  # Show welcome screen
+        self.status_label.setText("Welcome to ClipABit")
 
     def _create_search_screen(self):
         """Create the main search/results screen (original UI)."""
