@@ -1,6 +1,6 @@
 [project]
 name = "clipabit-plugin"
-version = "1.0.0-staging.2"
+version = "1.0.0-staging.3"
 requires-python = ">=3.12"
 dependencies = [
     "pyqt6>=6.10.0",
