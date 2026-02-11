@@ -31,6 +31,6 @@ jobs:
         run: pip install ruff
 
       - name: lint
-        run: ruff check plugin/clipabitshim.py plugin/clipabit/ watch_clipabit.py
+        run: ruff check clipabit.py clipabit/ watch_clipabit.py
       - name: syntax check
-        run: python -m compileall plugin/clipabitshim.py plugin/clipabit/ watch_clipabit.py
+        run: python -m compileall clipabit.py clipabit/ watch_clipabit.py

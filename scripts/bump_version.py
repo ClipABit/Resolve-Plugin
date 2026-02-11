@@ -15,7 +15,7 @@ def main() -> int:
         print("Version is empty.")
         return 1
 
-    pyproject_path = Path("plugin/pyproject.toml")
+    pyproject_path = Path("pyproject.toml")
     text = pyproject_path.read_text(encoding="utf-8")
     lines = text.splitlines(keepends=True)
     updated_lines = []
