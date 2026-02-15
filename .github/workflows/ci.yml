@@ -22,15 +22,13 @@ jobs:
       - name: checkout
         uses: actions/checkout@v5
 
-      - name: setup python
-        uses: actions/setup-python@v5
+      - name: setup uv
+        uses: astral-sh/setup-uv@v6
         with:
-          python-version: "3.12"
+          enable-cache: true
 
-      - name: install ruff
-        run: pip install ruff
+      - name: install dependencies
+        run: uv sync --group dev
 
       - name: lint
-        run: ruff check plugin/clipabitshim.py plugin/clipabit/ watch_clipabit.py
-      - name: syntax check
-        run: python -m compileall plugin/clipabitshim.py plugin/clipabit/ watch_clipabit.py
+        run: uv run ruff check .

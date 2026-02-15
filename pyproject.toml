@@ -11,4 +11,5 @@ dependencies = [
 [dependency-groups]
 dev = [
     "pyqt6>=6.10.0",
+    "ruff>=0.15.0",
 ]

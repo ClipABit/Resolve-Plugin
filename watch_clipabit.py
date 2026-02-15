@@ -30,7 +30,7 @@ logger = logging.getLogger("watch_clipabit")
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 
 
-DEFAULT_SOURCE = Path("plugin")
+DEFAULT_SOURCE = Path(".")
 DEFAULT_SHIM_NAME = "ClipABit.py"
 DEFAULT_PACKAGE_NAME = "clipabit"
 
@@ -62,7 +62,7 @@ def get_resolve_paths():
 def sync_plugin(src_root: Path, paths: dict):
     """Sync all plugin parts to Resolve."""
     # 1. Sync Shim
-    shim_src = src_root / "clipabitshim.py"
+    shim_src = src_root / "clipabit.py"
     if shim_src.exists():
         dst_utility = paths["utility"]
         dst_utility.mkdir(parents=True, exist_ok=True)
