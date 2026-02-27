@@ -83,7 +83,11 @@ class AuthManager:
         thread.start()
 
         def wait_for_callback(timeout: int = 300) -> Tuple[Optional[str], bool]:
+            print(f"[Auth] Waiting for callback (timeout: {timeout}s)...")
             event.wait(timeout)
+            if result["code"] is None:
+                print("[Auth] Timeout reached - no callback received")
+                print("[Auth] Login cancelled by user")
             print("[Auth] Callback server shutting down")
             server.shutdown()
             return result["code"], result["state_valid"]
@@ -175,10 +179,11 @@ if __name__ == "__main__":
     mgr = AuthManager()
     redirect_uri = "http://127.0.0.1:8765/callback"
     port, verifier, wait = mgr.initiate_login()
-    print(f"[Auth] Waiting for callback (port={port}). Log in in the browser...")
-    code, ok = wait(timeout=60)
+    code, ok = wait(timeout=300)  # ~5 min
     print(f"[Auth] Result: code={'...' if code else None}, state_valid={ok}")
     if code and ok:
         tokens = mgr.exchange_code_for_tokens(code, verifier, redirect_uri)
         if tokens:
             print(f"[Auth] Success! access_token present: {bool(tokens.get('access_token'))}")
+    elif not code:
+        print("[Auth] Login cancelled")
