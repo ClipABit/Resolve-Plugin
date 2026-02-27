@@ -1,13 +1,19 @@
+import json
 import secrets
 import hashlib
 import base64
+import time
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from threading import Event, Thread
 from urllib.parse import parse_qs, urlparse, urlencode
 from typing import Callable, Optional, Tuple
 
+import keyring
 import requests
 import webbrowser
+
+SERVICE_NAME = "clipabit-plugin"
+KEYRING_USERNAME = "tokens"
 
 
 class AuthManager:
@@ -172,18 +178,130 @@ class AuthManager:
         print(f"[Auth] Received refresh_token: {'yes' if refresh_token else 'no'}")
         print(f"[Auth] Token expires in: {expires_in}s")
 
+        id_token = data.get("id_token", "")
+        expires_at = time.time() + expires_in
+        self._save_tokens(access_token or "", refresh_token or "", id_token, expires_at)
+
         return data
+
+    def _save_tokens(self, access_token: str, refresh_token: str, id_token: str, expires_at: float) -> None:
+        """Store tokens in keyring."""
+        print(f"[Auth] Saving tokens to keyring (service: {SERVICE_NAME})")
+        data = {
+            "access_token": access_token,
+            "refresh_token": refresh_token,
+            "id_token": id_token,
+            "expires_at": expires_at,
+        }
+        keyring.set_password(SERVICE_NAME, KEYRING_USERNAME, json.dumps(data))
+        print(f"[Auth] Tokens saved successfully")
+
+    def _load_tokens(self) -> Optional[dict]:
+        """Retrieve tokens from keyring. Returns dict or None."""
+        print(f"[Auth] Loading tokens from keyring...")
+        raw = keyring.get_password(SERVICE_NAME, KEYRING_USERNAME)
+        if not raw:
+            return None
+        try:
+            data = json.loads(raw)
+            access = bool(data.get("access_token"))
+            refresh = bool(data.get("refresh_token"))
+            print(f"[Auth] Tokens loaded: access={'yes' if access else 'no'}, refresh={'yes' if refresh else 'no'}")
+            return data
+        except json.JSONDecodeError:
+            return None
+
+    def delete_tokens(self) -> None:
+        """Clear tokens from keyring (logout)."""
+        print(f"[Auth] Clearing tokens from keyring...")
+        try:
+            keyring.delete_password(SERVICE_NAME, KEYRING_USERNAME)
+        except keyring.errors.PasswordDeleteError:
+            pass  # No password stored
+
+    def _refresh_tokens(self, tokens: Optional[dict] = None) -> Optional[dict]:
+        """Refresh access token using refresh_token. Returns new token data or None."""
+        if tokens is None:
+            tokens = self._load_tokens()
+        if not tokens or not tokens.get("refresh_token"):
+            return None
+
+        token_url = f"https://{self.AUTH0_DOMAIN}/oauth/token"
+        payload = {
+            "grant_type": "refresh_token",
+            "client_id": self.CLIENT_ID,
+            "refresh_token": tokens["refresh_token"],
+        }
+
+        print(f"[Auth] Access token expired, refreshing...")
+        print(f"[Auth] Refresh request sent")
+
+        response = requests.post(
+            token_url,
+            data=payload,
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
+            timeout=10,
+        )
+
+        if not response.ok:
+            print(f"[Auth] Refresh failed: {response.text}")
+            return None
+
+        data = response.json()
+        access_token = data.get("access_token") or ""
+        expires_in = data.get("expires_in", 0)
+        refresh_token = data.get("refresh_token") or tokens.get("refresh_token")
+        id_token = data.get("id_token") or tokens.get("id_token", "")
+
+        print(f"[Auth] New access_token received: {access_token[:20]}...")
+
+        expires_at = time.time() + expires_in
+        self._save_tokens(access_token, refresh_token, id_token, expires_at)
+        print(f"[Auth] Tokens updated in keyring")
+
+        return {"access_token": access_token, "expires_at": expires_at}
+
+    def get_valid_access_token(self) -> Optional[str]:
+        """
+        Return a valid access token. Refreshes automatically if expired.
+        Returns None if no tokens stored or refresh fails.
+        """
+        tokens = self._load_tokens()
+        if not tokens:
+            return None
+
+        access_token = tokens.get("access_token")
+        expires_at = tokens.get("expires_at", 0)
+        # Refresh if expired or within 60s (buffer)
+        if not access_token or time.time() >= (expires_at - 60):
+            refreshed = self._refresh_tokens(tokens)
+            if refreshed:
+                access_token = refreshed.get("access_token")
+            else:
+                return None
+
+        print(f"[Auth] Returning valid access token")
+        return access_token
 
 
 if __name__ == "__main__":
+    import sys
     mgr = AuthManager()
     redirect_uri = "http://127.0.0.1:8765/callback"
-    port, verifier, wait = mgr.initiate_login()
-    code, ok = wait(timeout=300)  # ~5 min
-    print(f"[Auth] Result: code={'...' if code else None}, state_valid={ok}")
-    if code and ok:
-        tokens = mgr.exchange_code_for_tokens(code, verifier, redirect_uri)
-        if tokens:
-            print(f"[Auth] Success! access_token present: {bool(tokens.get('access_token'))}")
-    elif not code:
-        print("[Auth] Login cancelled")
+
+    if len(sys.argv) > 1 and sys.argv[1] == "logout":
+        mgr.delete_tokens()
+        print("[Auth] Logged out")
+    elif len(sys.argv) > 1 and sys.argv[1] == "token":
+        token = mgr.get_valid_access_token()
+        print(f"[Auth] get_valid_access_token: {'...' + token[-8:] if token else None}")
+    else:
+        port, verifier, wait = mgr.initiate_login()
+        code, ok = wait(timeout=300)  # ~5 min
+        print(f"[Auth] Result: code={'...' if code else None}, state_valid={ok}")
+        if code and ok:
+            tokens = mgr.exchange_code_for_tokens(code, verifier, redirect_uri)
+            if tokens:
+                print(f"[Auth] Success! access_token present: {bool(tokens.get('access_token'))}")
+        elif not code:
+            print("[Auth] Login cancelled")
