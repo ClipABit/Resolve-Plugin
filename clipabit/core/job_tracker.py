@@ -1,5 +1,6 @@
 from PyQt6.QtCore import QThread, pyqtSignal
 from threading import Lock
+from typing import Callable, Optional
 import requests
 import time
 import traceback
@@ -12,11 +13,12 @@ class JobTracker(QThread):
     job_completed = pyqtSignal(str, dict)  # job_id, result
     job_failed = pyqtSignal(str, str)      # job_id, error
     
-    def __init__(self):
+    def __init__(self, token_getter: Optional[Callable[[], Optional[str]]] = None):
         super().__init__()
         self.jobs_to_track = {}  # job_id -> job_info
         self.lock = Lock()
         self.running = True
+        self.token_getter = token_getter
         
     def add_job(self, job_id: str, job_info: dict):
         """Add a job to track."""
@@ -34,7 +36,19 @@ class JobTracker(QThread):
             
             for job_id, job_info in current_jobs.items():
                 try:
-                    response = requests.get(Config.STATUS_API_URL, params={"job_id": job_id}, timeout=Config.STATUS_CHECK_TIMEOUT)
+                    headers = {}
+                    if self.token_getter:
+                        token = self.token_getter()
+                        if token:
+                            headers["Authorization"] = f"Bearer {token}"
+                            print(f"[Auth] Adding Bearer token to status request")
+                            print(f"[Auth] Token: {token[:20]}...")
+                    response = requests.get(
+                        Config.STATUS_API_URL,
+                        params={"job_id": job_id},
+                        headers=headers,
+                        timeout=Config.STATUS_CHECK_TIMEOUT,
+                    )
                     if response.status_code == 200:
                         data = response.json()
                         status = data.get("status", "processing")

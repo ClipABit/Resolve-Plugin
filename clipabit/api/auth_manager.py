@@ -54,6 +54,7 @@ class AuthManager:
                     params = parse_qs(parsed.query)
                     code = params.get("code", [""])[0] or None
                     state = params.get("state", [""])[0] or None
+                    error = params.get("error", [""])[0] or None
 
                     result["code"] = code
                     result["state_valid"] = (
@@ -70,9 +71,10 @@ class AuthManager:
                     self.send_response(200)
                     self.send_header("Content-type", "text/html")
                     self.end_headers()
-                    self.wfile.write(
-                        b"<h1>Login successful! You can close this tab.</h1>"
-                    )
+                    if error:
+                        self.wfile.write(b"<h1>Login failed. You can close this tab.</h1>")
+                    else:
+                        self.wfile.write(b"<h1>Login successful! You can close this tab.</h1>")
                 else:
                     self.send_response(404)
                     self.end_headers()
@@ -211,13 +213,18 @@ class AuthManager:
         except json.JSONDecodeError:
             return None
 
+    def is_logged_in(self) -> bool:
+        """Check if tokens are stored in keyring (logged in)."""
+        raw = keyring.get_password(SERVICE_NAME, KEYRING_USERNAME)
+        return raw is not None and len(raw) > 0
+
     def delete_tokens(self) -> None:
         """Clear tokens from keyring (logout)."""
         print(f"[Auth] Clearing tokens from keyring...")
         try:
             keyring.delete_password(SERVICE_NAME, KEYRING_USERNAME)
-        except keyring.errors.PasswordDeleteError:
-            pass  # No password stored
+        except Exception:
+            pass  # No password stored or backend error
 
     def _refresh_tokens(self, tokens: Optional[dict] = None) -> Optional[dict]:
         """Refresh access token using refresh_token. Returns new token data or None."""

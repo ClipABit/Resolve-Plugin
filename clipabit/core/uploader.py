@@ -1,4 +1,5 @@
 from PyQt6.QtCore import QThread, pyqtSignal
+from typing import Optional
 import requests
 import os
 import time
@@ -14,13 +15,14 @@ class FileUploader(QThread):
     upload_failed = pyqtSignal(str, str, str)     # filename, file_hash, error_message
     upload_progress = pyqtSignal(str, str)        # filename, status_message
     
-    def __init__(self, file_info: dict, namespace: str):
+    def __init__(self, file_info: dict, namespace: str, access_token: Optional[str] = None):
         super().__init__()
         self.file_info = file_info
         self.namespace = namespace
         self.filepath = file_info['filepath']
         self.filename = file_info['filename']
         self.file_hash = file_info['hash']
+        self.access_token = access_token
         
     def run(self):
         """Execute the upload logic."""
@@ -49,12 +51,18 @@ class FileUploader(QThread):
             # Session setup
             session = requests.Session()
             upload_timeout = min(600, max(60, int(file_size_mb * 60)))
+            headers = {}
+            if self.access_token:
+                headers["Authorization"] = f"Bearer {self.access_token}"
+                print(f"[Auth] Adding Bearer token to upload request")
+                print(f"[Auth] Token: {self.access_token[:20]}...")
             
             # Perform blocking request (safe here because we are in a background thread)
             response = session.post(
                 Config.UPLOAD_API_URL, 
                 files=files_data, 
-                data=data, 
+                data=data,
+                headers=headers,
                 timeout=upload_timeout
             )
             

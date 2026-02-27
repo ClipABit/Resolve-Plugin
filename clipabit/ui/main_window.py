@@ -14,7 +14,7 @@ try:
                                  QLabel, QPushButton, QMessageBox, QLineEdit,
                                  QScrollArea, QFrame, QListWidget,
                                  QDialog, QCheckBox, QGridLayout)
-    from PyQt6.QtCore import Qt, QTimer
+    from PyQt6.QtCore import Qt, QTimer, QThread, pyqtSignal
 except ImportError as e:
     print(f"Error: PyQt6 not found or missing component: {e}")
     # We can't exit here if imported by shim, but we log the issue
@@ -28,7 +28,49 @@ from ..core.utils import (
     get_file_hash, get_hashed_identifier
 )
 from ..core.uploader import FileUploader
+from ..api.auth_manager import AuthManager
 from .theme import Theme
+
+REDIRECT_URI = "http://127.0.0.1:8765/callback"
+
+
+class LoginWorker(QThread):
+    """Background thread for auth flow so UI stays responsive."""
+    status_updated = pyqtSignal(str)
+    login_finished = pyqtSignal(bool, str)  # success, message
+
+    def __init__(self, auth_manager: AuthManager):
+        super().__init__()
+        self.auth_manager = auth_manager
+
+    def run(self):
+        try:
+            self.status_updated.emit("Opening browser...")
+            print("[Auth] Status: Opening browser...")
+            port, verifier, wait = self.auth_manager.initiate_login()
+            self.status_updated.emit("Waiting for login...")
+            print("[Auth] Status: Waiting for login...")
+            code, ok = wait(timeout=300)
+            if not code or not ok:
+                self.status_updated.emit("Login cancelled")
+                print("[Auth] Error: Login cancelled")
+                self.login_finished.emit(False, "Login cancelled")
+                return
+            tokens = self.auth_manager.exchange_code_for_tokens(code, verifier, REDIRECT_URI)
+            if tokens:
+                self.status_updated.emit("Login successful!")
+                print("[Auth] Status: Login successful!")
+                self.login_finished.emit(True, "Login successful!")
+            else:
+                err = "Token exchange failed"
+                self.status_updated.emit(err)
+                print(f"[Auth] Error: {err}")
+                self.login_finished.emit(False, err)
+        except Exception as e:
+            err = str(e)
+            self.status_updated.emit(err)
+            print(f"[Auth] Error: {err}")
+            self.login_finished.emit(False, err)
 
 # --- Setup Resolve API Globals ---
 resolve = None
@@ -75,8 +117,14 @@ class ClipABitApp(QWidget):
         self.current_upload = None  # Currently uploading file info
         self.is_uploading = False  # Flag to prevent concurrent uploads
         
+        # Auth manager and token getter for API calls
+        self.auth_manager = AuthManager()
+        def token_getter():
+            return self.auth_manager.get_valid_access_token()
+        self._token_getter = token_getter
+
         # Initialize job tracker
-        self.job_tracker = JobTracker()
+        self.job_tracker = JobTracker(token_getter=token_getter)
         self.job_tracker.job_completed.connect(self._on_job_completed)
         self.job_tracker.job_failed.connect(self._on_job_failed)
         self.job_tracker.start()
@@ -98,6 +146,11 @@ class ClipABitApp(QWidget):
         self.setMinimumSize(800, 600)
         self.init_ui()
         self._apply_theme()
+
+        # Startup auth check
+        is_logged_in = self.auth_manager.is_logged_in()
+        print(f"[Auth] Startup check: logged_in={is_logged_in}")
+        self._update_auth_button()
         
         # Setup refresh timer (disabled by default; refresh on demand)
         self.refresh_timer = QTimer()
@@ -173,6 +226,12 @@ class ClipABitApp(QWidget):
         
         # Spacer to push buttons to the right
         layout.addStretch()
+
+        # Sign In / Sign Out button
+        self.btn_auth = QPushButton()
+        self.btn_auth.setObjectName("headerButton")
+        self.btn_auth.clicked.connect(self._on_auth_button_clicked)
+        layout.addWidget(self.btn_auth)
         
         # Active Jobs/Debug button
         self.btn_jobs_debug = QPushButton("Active Jobs/Debug")
@@ -190,6 +249,38 @@ class ClipABitApp(QWidget):
         header.setLayout(layout)
         return header
     
+    def _update_auth_button(self):
+        """Update Sign In/Sign Out button based on login state."""
+        if self.auth_manager.is_logged_in():
+            self.btn_auth.setText("Sign Out")
+        else:
+            self.btn_auth.setText("Sign In")
+
+    def _on_auth_button_clicked(self):
+        """Handle Sign In or Sign Out button click."""
+        if self.auth_manager.is_logged_in():
+            print("[Auth] Sign Out button clicked")
+            self.auth_manager.delete_tokens()
+            self._update_auth_button()
+            self.status_label.setText("Signed out")
+        else:
+            print("[Auth] Sign In button clicked")
+            if hasattr(self, "_login_worker") and self._login_worker and self._login_worker.isRunning():
+                return  # Already logging in
+            self._login_worker = LoginWorker(self.auth_manager)
+            self._login_worker.status_updated.connect(self.status_label.setText)
+            self._login_worker.login_finished.connect(self._on_login_finished)
+            self._login_worker.start()
+
+    def _on_login_finished(self, success: bool, message: str):
+        """Handle login flow completion."""
+        self._update_auth_button()
+        if success:
+            if self.upload_queue and not self.is_uploading:
+                QTimer.singleShot(100, self._process_upload_queue)
+        elif message != "Login successful!":
+            QMessageBox.warning(self, "Login Failed", message)
+
     def _create_search_bar(self):
         """Create the pill-shaped search bar matching Figma design."""
         container = QWidget()
@@ -783,12 +874,30 @@ class ClipABitApp(QWidget):
 
     def _delete_backend_entry(self, filename: str, hashed_identifier: str, namespace: str):
         """Request backend deletion for a file's Pinecone data."""
-        # print(f"[Delete] Backend deletion disabled for {filename} (local storage only).")
-        pass
+        token = self._token_getter()
+        if not token:
+            return
+        try:
+            headers = {"Authorization": f"Bearer {token}"}
+            print(f"[Auth] Adding Bearer token to delete request")
+            print(f"[Auth] Token: {token[:20]}...")
+            response = requests.delete(
+                Config.DELETE_API_URL,
+                params={"namespace": namespace, "hashed_identifier": hashed_identifier},
+                headers=headers,
+                timeout=10,
+            )
+            if response.status_code not in (200, 204):
+                print(f"[Delete] Backend delete failed for {filename}: {response.status_code} {response.text}")
+        except Exception as e:
+            print(f"[Delete] Backend delete error for {filename}: {e}")
             
     def _process_upload_queue(self):
         """Process the next file in the upload queue."""
         if not self.upload_queue or self.is_uploading:
+            return
+        if not self._token_getter():
+            QMessageBox.warning(self, "Sign In Required", "Please sign in to upload.")
             return
             
         # Get next file from queue
@@ -813,9 +922,10 @@ class ClipABitApp(QWidget):
         user_id_safe = user_id.lower().replace(" ", "_")
         project_safe = project_name.lower().replace(" ", "_")
         namespace = f"{user_id_safe}-{project_safe}"
+        token = self._token_getter()
         
         # Start background uploader thread
-        self.current_uploader_thread = FileUploader(file_info, namespace)
+        self.current_uploader_thread = FileUploader(file_info, namespace, access_token=token)
         self.current_uploader_thread.upload_started.connect(self._on_upload_started)
         self.current_uploader_thread.upload_progress.connect(self._on_upload_progress)
         self.current_uploader_thread.upload_success.connect(self._on_upload_success)
@@ -1023,13 +1133,20 @@ class ClipABitApp(QWidget):
         project_safe = project_name.lower().replace(" ", "_")
         namespace = f"{user_id_safe}-{project_safe}"
         
+        token = self._token_getter()
+        if not token:
+            QMessageBox.warning(self, "Sign In Required", "Please sign in to search.")
+            return
+        
         self.status_label.setText(f"Searching for: {query}")
         self.btn_search.setEnabled(False)
         
         try:
-            # Perform search using same approach as Streamlit
+            headers = {"Authorization": f"Bearer {token}"}
+            print(f"[Auth] Adding Bearer token to search request")
+            print(f"[Auth] Token: {token[:20]}...")
             params = {"query": query, "namespace": namespace}
-            response = requests.get(Config.SEARCH_API_URL, params=params, timeout=30)
+            response = requests.get(Config.SEARCH_API_URL, params=params, headers=headers, timeout=30)
             
             if response.status_code == 200:
                 result = response.json()
