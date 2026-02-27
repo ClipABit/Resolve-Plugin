@@ -3,34 +3,49 @@ import platform
 class Theme:
     """Color theme for the UI matching Figma design."""
     
-    # Dark theme (default)
+    # Dark theme (default) - Updated to match Figma mockups
     DARK = {
         'background': '#26272E',
         'card_bg': '#3A3B42',
+        'card_thumbnail': '#D9D9D9',
         'text': '#FFFFFF',
-        'text_secondary': '#8E8E93',
-        'accent': '#F5A623',
-        'accent_hover': '#E09000',
+        'text_secondary': '#9CA3AF',
+        'accent': '#FAAF04',
+        'accent_hover': '#E09A00',
         'search_bg': '#F2F8FF',
         'search_text': '#000000',
-        'search_placeholder': '#8E8E93',
-        'button_text': '#000000',
+        'search_placeholder': '#9CA3AF',
+        'button_text': '#FFFFFF',
+        'button_secondary': '#9CA3AF',
         'border': '#4A4B52',
+        'progress_bg': '#FAAF04',
+        'close_button': '#FFFFFF',
+        'logo_bg': '#FFFFFF',
+        'logo_inner': '#979797',
+        'logo_play': '#26272E',
     }
     
-    # Light theme
+    # Light theme - Updated to match Figma mockups
     LIGHT = {
         'background': '#FFFFFF',
-        'card_bg': '#E5E5E5',
-        'text': '#000000',
-        'text_secondary': '#8E8E93',
-        'accent': '#F5A623',
-        'accent_hover': '#E09000',
+        'card_bg': '#F5F5F5',
+        'card_thumbnail': '#D9D9D9',
+        'text': '#0F1729',
+        'text_secondary': '#9CA3AF',
+        'accent': '#FAAF04',
+        'accent_hover': '#E09A00',
+        'accent_border': '#189FD1',
         'search_bg': '#F2F8FF',
         'search_text': '#000000',
-        'search_placeholder': '#8E8E93',
-        'button_text': '#000000',
-        'border': '#D0D0D0',
+        'search_placeholder': '#9CA3AF',
+        'button_text': '#FFFFFF',
+        'button_secondary': '#9CA3AF',
+        'border': '#189FD1',
+        'progress_bg': '#FAAF04',
+        'close_button': '#0F1729',
+        'logo_bg': '#0F1729',
+        'logo_inner': '#979797',
+        'logo_play': '#FFFFFF',
     }
     
     # Current theme (can be toggled or auto-detected)

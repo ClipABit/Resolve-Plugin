@@ -15,14 +15,15 @@ class FileUploader(QThread):
     upload_failed = pyqtSignal(str, str, str)     # filename, file_hash, error_message
     upload_progress = pyqtSignal(str, str)        # filename, status_message
     
-    def __init__(self, file_info: dict, namespace: str, access_token: Optional[str] = None):
+    def __init__(self, file_info: dict, namespace: str, auth_manager=None, access_token: Optional[str] = None):
         super().__init__()
         self.file_info = file_info
         self.namespace = namespace
         self.filepath = file_info['filepath']
         self.filename = file_info['filename']
         self.file_hash = file_info['hash']
-        self.access_token = access_token
+        self.auth_manager = auth_manager
+        self.access_token = access_token  # fallback if no auth_manager
         
     def run(self):
         """Execute the upload logic."""
@@ -41,7 +42,6 @@ class FileUploader(QThread):
             file_size_mb = file_size / (1024 * 1024)
             
             # Prepare request
-            files_data = [("files", (self.filename, open(self.filepath, 'rb'), "video/mp4"))]
             data = {"namespace": self.namespace}
             
             # Update status
@@ -51,25 +51,30 @@ class FileUploader(QThread):
             # Session setup
             session = requests.Session()
             upload_timeout = min(600, max(60, int(file_size_mb * 60)))
-            headers = {}
-            if self.access_token:
-                headers["Authorization"] = f"Bearer {self.access_token}"
-                print(f"[Auth] Adding Bearer token to upload request")
-                print(f"[Auth] Token: {self.access_token[:20]}...")
-            
-            # Perform blocking request (safe here because we are in a background thread)
-            response = session.post(
-                Config.UPLOAD_API_URL, 
-                files=files_data, 
-                data=data,
-                headers=headers,
-                timeout=upload_timeout
-            )
-            
-            # Close file handle by ensuring the request consumes the file or we rely on 'files_data' causing a read.
-            # NOTE: 'requests' does not automatically close opened files passed to it if you opened them.
-            # We should explicity close the file. 
-            files_data[0][1][1].close() 
+
+            def make_upload_request(token):
+                headers = {}
+                if token:
+                    headers["Authorization"] = f"Bearer {token}"
+                    print(f"[Auth] Adding Bearer token to upload request")
+                    print(f"[Auth] Token: {token[:20]}...")
+                fd = [("files", (self.filename, open(self.filepath, 'rb'), "video/mp4"))]
+                try:
+                    return session.post(
+                        Config.UPLOAD_API_URL,
+                        files=fd,
+                        data=data,
+                        headers=headers,
+                        timeout=upload_timeout,
+                    )
+                finally:
+                    fd[0][1][1].close()
+
+            if self.auth_manager:
+                response = self.auth_manager.execute_with_auth_retry("upload", make_upload_request)
+            else:
+                token = self.access_token
+                response = make_upload_request(token)
 
             if response.status_code == 200:
                 result = response.json()

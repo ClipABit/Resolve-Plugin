@@ -13,8 +13,10 @@ try:
     from PyQt6.QtWidgets import (QApplication, QWidget, QVBoxLayout, QHBoxLayout,
                                  QLabel, QPushButton, QMessageBox, QLineEdit,
                                  QScrollArea, QFrame, QListWidget,
-                                 QDialog, QCheckBox, QGridLayout)
-    from PyQt6.QtCore import Qt, QTimer, QThread, pyqtSignal
+                                 QDialog, QCheckBox, QGridLayout, QProgressBar)
+    from PyQt6.QtCore import Qt, QTimer, QThread, pyqtSignal, QSize
+    from PyQt6.QtGui import QPixmap, QIcon
+    from PyQt6.QtSvgWidgets import QSvgWidget
 except ImportError as e:
     print(f"Error: PyQt6 not found or missing component: {e}")
     # We can't exit here if imported by shim, but we log the issue
@@ -119,12 +121,19 @@ class ClipABitApp(QWidget):
         
         # Auth manager and token getter for API calls
         self.auth_manager = AuthManager()
+
+        def _do_reauth_prompt():
+            self._update_auth_button()
+            QMessageBox.warning(self, "Session Expired", "Please sign in again.")
+
+        self.auth_manager.on_reauth_required = lambda: QTimer.singleShot(0, _do_reauth_prompt)
+
         def token_getter():
             return self.auth_manager.get_valid_access_token()
         self._token_getter = token_getter
 
         # Initialize job tracker
-        self.job_tracker = JobTracker(token_getter=token_getter)
+        self.job_tracker = JobTracker(auth_manager=self.auth_manager)
         self.job_tracker.job_completed.connect(self._on_job_completed)
         self.job_tracker.job_failed.connect(self._on_job_failed)
         self.job_tracker.start()
@@ -167,11 +176,69 @@ class ClipABitApp(QWidget):
         main_layout.setContentsMargins(0, 0, 0, 0)
         
         # Header bar with buttons (top-right)
-        header = self._create_header()
-        main_layout.addWidget(header)
+        self.header = self._create_header()
+        main_layout.addWidget(self.header)
         
-        # Content area
+        # Content area - we'll use a stacked approach with two content widgets
+        # Content for "Get Started" (sign-in) screen
+        self.get_started_content = self._create_get_started_content()
+        main_layout.addWidget(self.get_started_content, 1)
+        
+        # Content for main search screen (after login)
+        self.search_content = self._create_search_content()
+        main_layout.addWidget(self.search_content, 1)
+        
+        # Status bar (minimal)
+        self.status_label = QLabel("Ready")
+        self.status_label.setObjectName("statusBar")
+        main_layout.addWidget(self.status_label)
+        
+        self.setLayout(main_layout)
+        
+        # Show appropriate content based on login state
+        self._update_ui_for_auth_state()
+    
+    def _create_get_started_content(self):
+        """Create the 'Get Started' screen shown when not logged in."""
         content = QWidget()
+        content.setObjectName("getStartedContent")
+        layout = QVBoxLayout()
+        layout.setSpacing(0)
+        layout.setContentsMargins(0, 0, 0, 0)
+        
+        # Center container
+        center_container = QWidget()
+        center_layout = QVBoxLayout()
+        center_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        center_layout.setSpacing(30)
+        
+        # Tagline text (centered, no logo)
+        tagline = QLabel("Search by idea's, not timestamps.")
+        tagline.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        tagline.setObjectName("taglineLabel")
+        center_layout.addWidget(tagline)
+        
+        # Get Started button (yellow, rectangular)
+        self.btn_get_started = QPushButton("Get Started")
+        self.btn_get_started.setObjectName("getStartedButton")
+        self.btn_get_started.setFixedSize(240, 36)
+        self.btn_get_started.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_get_started.clicked.connect(self._on_auth_button_clicked)
+        center_layout.addWidget(self.btn_get_started, alignment=Qt.AlignmentFlag.AlignCenter)
+        
+        center_container.setLayout(center_layout)
+        
+        layout.addStretch()
+        layout.addWidget(center_container)
+        layout.addStretch()
+        
+        content.setLayout(layout)
+        return content
+    
+    def _create_search_content(self):
+        """Create the main search screen shown after login."""
+        content = QWidget()
+        content.setObjectName("searchContent")
         content_layout = QVBoxLayout()
         content_layout.setSpacing(20)
         content_layout.setContentsMargins(40, 20, 40, 40)
@@ -206,45 +273,73 @@ class ClipABitApp(QWidget):
         content_layout.addWidget(self.results_scroll, 1)
         
         content.setLayout(content_layout)
-        main_layout.addWidget(content, 1)
+        return content
+    
+    def _update_ui_for_auth_state(self):
+        """Show/hide UI elements based on authentication state."""
+        is_logged_in = self.auth_manager.is_logged_in()
         
-        # Status bar (minimal)
-        self.status_label = QLabel("Ready")
-        self.status_label.setObjectName("statusBar")
-        main_layout.addWidget(self.status_label)
+        # Toggle visibility of content areas
+        self.get_started_content.setVisible(not is_logged_in)
+        self.search_content.setVisible(is_logged_in)
         
-        self.setLayout(main_layout)
+        # Hide auth button in header when on get started screen
+        self.btn_auth.setVisible(is_logged_in)
     
     def _create_header(self):
-        """Create the header bar with logo, Active Jobs/Debug button and settings."""
+        """Create the header bar with logo, Active Jobs/Debug button, settings, and close button."""
         header = QWidget()
         header.setFixedHeight(80)
         header.setObjectName("header")
         
         layout = QHBoxLayout()
         layout.setContentsMargins(20, 15, 20, 15)
+        layout.setSpacing(10)
+        
+        # Logo on the left using SVG (maintain aspect ratio: original is 292x135)
+        logo_path = Path(__file__).parent.parent.parent / "assets" / "logo-dark.svg"
+        if logo_path.exists():
+            self.logo_widget = QSvgWidget(str(logo_path))
+            self.logo_widget.setFixedSize(130, 60)  # Maintains ~2.17:1 aspect ratio
+        else:
+            self.logo_widget = QLabel("ClipABit")
+            self.logo_widget.setObjectName("logoWidget")
+        layout.addWidget(self.logo_widget)
         
         # Spacer to push buttons to the right
         layout.addStretch()
-
-        # Sign In / Sign Out button
+        
+        # Sign In / Sign Out button (only visible when logged in)
         self.btn_auth = QPushButton()
         self.btn_auth.setObjectName("headerButton")
         self.btn_auth.clicked.connect(self._on_auth_button_clicked)
         layout.addWidget(self.btn_auth)
         
-        # Active Jobs/Debug button
-        self.btn_jobs_debug = QPushButton("Active Jobs/Debug")
-        self.btn_jobs_debug.setObjectName("headerButton")
+        # Media Pool button
+        self.btn_media_pool = QPushButton("Media Pool")
+        self.btn_media_pool.setObjectName("headerButtonSecondary")
+        self.btn_media_pool.clicked.connect(self._show_settings_dialog)
+        layout.addWidget(self.btn_media_pool)
+        
+        # Debug button
+        self.btn_jobs_debug = QPushButton("Debug")
+        self.btn_jobs_debug.setObjectName("headerButtonSecondary")
         self.btn_jobs_debug.clicked.connect(self._show_jobs_dialog)
         layout.addWidget(self.btn_jobs_debug)
         
-        # Settings button (gear icon)
-        self.btn_settings = QPushButton("⚙")
+        # Settings button (gear icon) - use image placeholder
+        self.btn_settings = QPushButton()
         self.btn_settings.setObjectName("settingsButton")
-        self.btn_settings.setFixedSize(40, 40)
+        self.btn_settings.setFixedSize(46, 45)
         self.btn_settings.clicked.connect(self._show_settings_dialog)
         layout.addWidget(self.btn_settings)
+        
+        # Close button (X) on the right
+        self.btn_close = QPushButton("✕")
+        self.btn_close.setObjectName("closeButton")
+        self.btn_close.setFixedSize(40, 40)
+        self.btn_close.clicked.connect(self.close)
+        layout.addWidget(self.btn_close)
         
         header.setLayout(layout)
         return header
@@ -255,6 +350,9 @@ class ClipABitApp(QWidget):
             self.btn_auth.setText("Sign Out")
         else:
             self.btn_auth.setText("Sign In")
+        
+        # Also update the UI state
+        self._update_ui_for_auth_state()
 
     def _on_auth_button_clicked(self):
         """Handle Sign In or Sign Out button click."""
@@ -282,34 +380,59 @@ class ClipABitApp(QWidget):
             QMessageBox.warning(self, "Login Failed", message)
 
     def _create_search_bar(self):
-        """Create the pill-shaped search bar matching Figma design."""
+        """Create the search bar matching Figma design."""
         container = QWidget()
         container.setObjectName("searchContainer")
-        container.setFixedHeight(52)
-        container.setMinimumWidth(500)
-        container.setMaximumWidth(600)
+        container.setFixedHeight(44)
+        container.setMinimumWidth(450)
+        container.setMaximumWidth(550)
         
         layout = QHBoxLayout()
-        layout.setContentsMargins(4, 4, 4, 4)
-        layout.setSpacing(0)
+        layout.setContentsMargins(15, 4, 15, 4)
+        layout.setSpacing(10)
         
-        # Search button (left side, inside the pill)
-        self.btn_search = QPushButton("Search")
+        # Hidden search button for functionality (triggered by Enter key)
+        self.btn_search = QPushButton()
         self.btn_search.setObjectName("searchButton")
-        self.btn_search.setFixedSize(80, 44)
-        self.btn_search.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_search.setFixedSize(0, 0)  # Hidden
         self.btn_search.clicked.connect(self._perform_search)
         layout.addWidget(self.btn_search)
         
         # Search input
         self.search_input = QLineEdit()
         self.search_input.setObjectName("searchInput")
-        self.search_input.setPlaceholderText("Enter search query (e.g., 'woman walking', 'car driving')")
+        self.search_input.setPlaceholderText("Enter search query (e.g. 'woman walking', 'car driving')")
         self.search_input.returnPressed.connect(self._perform_search)
         layout.addWidget(self.search_input, 1)
         
+        # Clear button (X) - only visible when there's text
+        self.btn_clear_search = QPushButton("✕")
+        self.btn_clear_search.setObjectName("clearSearchButton")
+        self.btn_clear_search.setFixedSize(24, 24)
+        self.btn_clear_search.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_clear_search.clicked.connect(self._clear_search)
+        self.btn_clear_search.setVisible(False)
+        layout.addWidget(self.btn_clear_search)
+        
+        # Connect text changed to show/hide clear button
+        self.search_input.textChanged.connect(self._on_search_text_changed)
+        
         container.setLayout(layout)
         return container
+    
+    def _clear_search(self):
+        """Clear the search input and results."""
+        self.search_input.clear()
+        self.empty_state_label.setVisible(True)
+        # Clear any existing results
+        for i in reversed(range(self.results_layout.count())):
+            widget = self.results_layout.itemAt(i).widget()
+            if widget and widget != self.empty_state_label:
+                widget.deleteLater()
+    
+    def _on_search_text_changed(self, text):
+        """Show/hide clear button based on search input text."""
+        self.btn_clear_search.setVisible(bool(text))
 
     # --- Utility Wrappers (Delegated to core.utils) ---
     def _get_storage_path(self) -> Path:
@@ -329,7 +452,7 @@ class ClipABitApp(QWidget):
 
     # --- Methods to FILL IN ---
     def _apply_theme(self):
-        """Apply the current theme stylesheet."""
+        """Apply the current theme stylesheet matching Figma mockups."""
         t = Theme.current
         
         self.setStyleSheet(f"""
@@ -345,17 +468,65 @@ class ClipABitApp(QWidget):
                 background-color: {t['background']};
             }}
             
-            /* Header button */
-            QPushButton#headerButton {{
-                background-color: {t['card_bg']};
+            /* Logo widget - header size (rectangular) */
+            QWidget#logoWidget {{
+                background-color: transparent;
+                border-radius: 0;
+            }}
+            
+            /* Large logo for Get Started screen */
+            QWidget#largeLogoContainer {{
+                background-color: transparent;
+                border-radius: 0;
+            }}
+            
+            /* Tagline label (smaller) */
+            QLabel#taglineLabel {{
+                font-size: 18px;
+                font-weight: 400;
                 color: {t['text']};
+                padding: 15px;
+            }}
+            
+            /* Get Started button (yellow, rectangular) */
+            QPushButton#getStartedButton {{
+                background-color: #FAAF04;
+                color: {t['button_text']};
                 border: none;
-                border-radius: 16px;
+                border-radius: 0;
+                font-size: 14px;
+                font-weight: 500;
+            }}
+            QPushButton#getStartedButton:hover {{
+                background-color: #E09E04;
+            }}
+            
+            /* Header button (primary - Sign In/Out, rectangular) */
+            QPushButton#headerButton {{
+                background-color: {t['accent']};
+                color: {t['button_text']};
+                border: none;
+                border-radius: 0;
                 padding: 8px 16px;
                 font-size: 13px;
+                font-weight: 500;
             }}
             QPushButton#headerButton:hover {{
-                background-color: {t['border']};
+                background-color: {t['accent_hover']};
+            }}
+            
+            /* Header button secondary (Debug, Media Pool, rectangular) */
+            QPushButton#headerButtonSecondary {{
+                background-color: #9CA3AF;
+                color: #FFFFFF;
+                border: none;
+                border-radius: 0;
+                padding: 8px 16px;
+                font-size: 13px;
+                font-weight: 500;
+            }}
+            QPushButton#headerButtonSecondary:hover {{
+                background-color: #7B8794;
             }}
             
             /* Settings button */
@@ -369,6 +540,18 @@ class ClipABitApp(QWidget):
                 color: {t['text']};
             }}
             
+            /* Close button (X) */
+            QPushButton#closeButton {{
+                background-color: transparent;
+                color: {t['close_button']};
+                border: none;
+                font-size: 18px;
+                font-weight: bold;
+            }}
+            QPushButton#closeButton:hover {{
+                color: {t['accent']};
+            }}
+            
             /* Main title */
             QLabel#mainTitle {{
                 font-size: 32px;
@@ -377,18 +560,18 @@ class ClipABitApp(QWidget):
                 padding: 20px;
             }}
             
-            /* Search container (pill shape) */
+            /* Search container (rectangular) */
             QWidget#searchContainer {{
-                background-color: {t['search_bg']};
-                border-radius: 26px;
+                background-color: #F2F8FF;
+                border-radius: 0;
             }}
             
-            /* Search button */
+            /* Search button (hidden) */
             QPushButton#searchButton {{
                 background-color: {t['accent']};
-                color: {t['button_text']};
+                color: #000000;
                 border: none;
-                border-radius: 22px;
+                border-radius: 0;
                 font-size: 14px;
                 font-weight: 600;
             }}
@@ -396,16 +579,25 @@ class ClipABitApp(QWidget):
                 background-color: {t['accent_hover']};
             }}
             
-            /* Search input */
+            /* Search input - darker text for light background */
             QLineEdit#searchInput {{
                 background-color: transparent;
                 border: none;
-                color: {t['search_text']};
+                color: #0F1729;
                 font-size: 14px;
-                padding: 0 15px;
+                padding: 0 10px;
             }}
-            QLineEdit#searchInput::placeholder {{
-                color: {t['search_placeholder']};
+            
+            /* Clear search button */
+            QPushButton#clearSearchButton {{
+                background-color: transparent;
+                color: #979797;
+                border: none;
+                font-size: 14px;
+                font-weight: bold;
+            }}
+            QPushButton#clearSearchButton:hover {{
+                color: #666666;
             }}
             
             /* Empty state */
@@ -423,25 +615,38 @@ class ClipABitApp(QWidget):
                 background-color: {t['background']};
             }}
             
-            /* Result card */
+            /* Result card (rectangular) */
             QFrame#resultCard {{
                 background-color: {t['card_bg']};
-                border-radius: 8px;
+                border-radius: 0;
                 border: 1px solid {t['border']};
             }}
             
-            /* Thumbnail placeholder */
+            /* Thumbnail placeholder (rectangular) */
             QLabel#thumbnail {{
-                background-color: #D9D9D9;
-                border-radius: 4px;
+                background-color: {t['card_thumbnail']};
+                border-radius: 0;
             }}
             
-            /* Add to timeline button */
+            /* Progress bar (rectangular) */
+            QProgressBar {{
+                background-color: rgba(217, 217, 217, 0.3);
+                border: none;
+                border-radius: 0;
+                height: 4px;
+                text-align: center;
+            }}
+            QProgressBar::chunk {{
+                background-color: {t['progress_bg']};
+                border-radius: 0;
+            }}
+            
+            /* Add to timeline button (rectangular) */
             QPushButton#addToTimelineBtn {{
                 background-color: {t['accent']};
-                color: {t['button_text']};
+                color: #000000;
                 border: none;
-                border-radius: 4px;
+                border-radius: 0;
                 padding: 8px 16px;
                 font-size: 12px;
                 font-weight: 500;
@@ -458,11 +663,11 @@ class ClipABitApp(QWidget):
             QScrollBar:vertical {{
                 background-color: {t['background']};
                 width: 8px;
-                border-radius: 4px;
+                border-radius: 0;
             }}
             QScrollBar::handle:vertical {{
                 background-color: {t['border']};
-                border-radius: 4px;
+                border-radius: 0;
                 min-height: 30px;
             }}
             QScrollBar::handle:vertical:hover {{
@@ -478,13 +683,24 @@ class ClipABitApp(QWidget):
             }}
             QDialog QPushButton {{
                 background-color: {t['accent']};
-                color: {t['button_text']};
+                color: #000000;
                 border: none;
-                border-radius: 8px;
+                border-radius: 0;
                 padding: 10px 20px;
+                font-weight: 500;
             }}
             QDialog QPushButton:hover {{
                 background-color: {t['accent_hover']};
+            }}
+            
+            /* Get Started content container */
+            QWidget#getStartedContent {{
+                background-color: {t['background']};
+            }}
+            
+            /* Search content container */
+            QWidget#searchContent {{
+                background-color: {t['background']};
             }}
         """)
     
@@ -874,19 +1090,21 @@ class ClipABitApp(QWidget):
 
     def _delete_backend_entry(self, filename: str, hashed_identifier: str, namespace: str):
         """Request backend deletion for a file's Pinecone data."""
-        token = self._token_getter()
-        if not token:
+        if not self.auth_manager.is_logged_in():
             return
         try:
-            headers = {"Authorization": f"Bearer {token}"}
-            print(f"[Auth] Adding Bearer token to delete request")
-            print(f"[Auth] Token: {token[:20]}...")
-            response = requests.delete(
-                Config.DELETE_API_URL,
-                params={"namespace": namespace, "hashed_identifier": hashed_identifier},
-                headers=headers,
-                timeout=10,
-            )
+            def make_request(token):
+                headers = {"Authorization": f"Bearer {token}"} if token else {}
+                if token:
+                    print(f"[Auth] Adding Bearer token to delete request")
+                    print(f"[Auth] Token: {token[:20]}...")
+                return requests.delete(
+                    Config.DELETE_API_URL,
+                    params={"namespace": namespace, "hashed_identifier": hashed_identifier},
+                    headers=headers,
+                    timeout=10,
+                )
+            response = self.auth_manager.execute_with_auth_retry("delete", make_request)
             if response.status_code not in (200, 204):
                 print(f"[Delete] Backend delete failed for {filename}: {response.status_code} {response.text}")
         except Exception as e:
@@ -922,10 +1140,9 @@ class ClipABitApp(QWidget):
         user_id_safe = user_id.lower().replace(" ", "_")
         project_safe = project_name.lower().replace(" ", "_")
         namespace = f"{user_id_safe}-{project_safe}"
-        token = self._token_getter()
         
         # Start background uploader thread
-        self.current_uploader_thread = FileUploader(file_info, namespace, access_token=token)
+        self.current_uploader_thread = FileUploader(file_info, namespace, auth_manager=self.auth_manager)
         self.current_uploader_thread.upload_started.connect(self._on_upload_started)
         self.current_uploader_thread.upload_progress.connect(self._on_upload_progress)
         self.current_uploader_thread.upload_success.connect(self._on_upload_success)
@@ -1133,8 +1350,7 @@ class ClipABitApp(QWidget):
         project_safe = project_name.lower().replace(" ", "_")
         namespace = f"{user_id_safe}-{project_safe}"
         
-        token = self._token_getter()
-        if not token:
+        if not self.auth_manager.is_logged_in():
             QMessageBox.warning(self, "Sign In Required", "Please sign in to search.")
             return
         
@@ -1142,11 +1358,14 @@ class ClipABitApp(QWidget):
         self.btn_search.setEnabled(False)
         
         try:
-            headers = {"Authorization": f"Bearer {token}"}
-            print(f"[Auth] Adding Bearer token to search request")
-            print(f"[Auth] Token: {token[:20]}...")
             params = {"query": query, "namespace": namespace}
-            response = requests.get(Config.SEARCH_API_URL, params=params, headers=headers, timeout=30)
+            def make_request(token):
+                headers = {"Authorization": f"Bearer {token}"} if token else {}
+                if token:
+                    print(f"[Auth] Adding Bearer token to search request")
+                    print(f"[Auth] Token: {token[:20]}...")
+                return requests.get(Config.SEARCH_API_URL, params=params, headers=headers, timeout=30)
+            response = self.auth_manager.execute_with_auth_retry("search", make_request)
             
             if response.status_code == 200:
                 result = response.json()
@@ -1217,12 +1436,12 @@ class ClipABitApp(QWidget):
                 self._clear_layout(item.layout())
         
     def _create_result_card(self, result: Dict, index: int) -> QWidget:
-        """Create a card widget for a single search result matching Figma design."""
+        """Create a card widget for a single search result matching Figma mockup design."""
         t = Theme.current
         
         card = QFrame()
         card.setObjectName("resultCard")
-        card.setFixedSize(280, 220)
+        card.setFixedSize(280, 240)
         
         layout = QVBoxLayout()
         layout.setSpacing(0)
@@ -1232,16 +1451,17 @@ class ClipABitApp(QWidget):
         filename = metadata.get('file_filename', 'Unknown')
         start_time = metadata.get('start_time_s', 0)
         end_time = metadata.get('end_time_s', 0)
+        score = result.get('score', 0)
         
-        # Thumbnail placeholder
+        # Thumbnail placeholder (gray card from mockup)
         thumbnail = QLabel()
         thumbnail.setObjectName("thumbnail")
-        thumbnail.setFixedHeight(150)
+        thumbnail.setFixedHeight(140)
         thumbnail.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        # Show filename and time range on thumbnail
-        thumbnail.setText(f"{filename[:20]}...\n{start_time:.1f}s - {end_time:.1f}s" if len(filename) > 20 else f"{filename}\n{start_time:.1f}s - {end_time:.1f}s")
-        thumbnail.setStyleSheet("""
-            background-color: #D9D9D9;
+        display_name = f"{filename[:20]}..." if len(filename) > 20 else filename
+        thumbnail.setText(f"{display_name}\n{start_time:.1f}s - {end_time:.1f}s")
+        thumbnail.setStyleSheet(f"""
+            background-color: {t['card_thumbnail']};
             color: #666666;
             font-size: 11px;
             border-top-left-radius: 8px;
@@ -1249,16 +1469,42 @@ class ClipABitApp(QWidget):
         """)
         layout.addWidget(thumbnail)
         
-        # Button container
+        # Progress bar (yellow bar from mockup showing relevance score)
+        progress = QProgressBar()
+        progress.setFixedHeight(6)
+        progress.setTextVisible(False)
+        progress.setMinimum(0)
+        progress.setMaximum(100)
+        progress.setValue(int(min(score * 100, 100)))
+        progress.setStyleSheet(f"""
+            QProgressBar {{
+                background-color: rgba(217, 217, 217, 0.5);
+                border: none;
+                border-radius: 0px;
+            }}
+            QProgressBar::chunk {{
+                background-color: {t['progress_bg']};
+            }}
+        """)
+        layout.addWidget(progress)
+        
+        # Info and button container
         btn_container = QWidget()
-        btn_container.setFixedHeight(50)
+        btn_container.setFixedHeight(70)
         btn_container.setStyleSheet(f"background-color: {t['card_bg']}; border-bottom-left-radius: 8px; border-bottom-right-radius: 8px;")
-        btn_layout = QHBoxLayout()
-        btn_layout.setContentsMargins(10, 5, 10, 10)
+        btn_layout = QVBoxLayout()
+        btn_layout.setContentsMargins(10, 8, 10, 10)
+        btn_layout.setSpacing(6)
+        
+        # Filename label
+        name_label = QLabel(display_name)
+        name_label.setStyleSheet(f"color: {t['text']}; font-size: 12px; font-weight: 500; background: transparent;")
+        btn_layout.addWidget(name_label)
         
         # Add to timeline button
         btn_add = QPushButton("Add to timeline")
         btn_add.setObjectName("addToTimelineBtn")
+        btn_add.setFixedHeight(28)
         btn_add.setCursor(Qt.CursorShape.PointingHandCursor)
         btn_add.clicked.connect(lambda checked, r=result: self._add_result_to_timeline(r))
         btn_layout.addWidget(btn_add)
