@@ -3,8 +3,11 @@ import hashlib
 import base64
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from threading import Event, Thread
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, urlparse, urlencode
 from typing import Callable, Optional, Tuple
+
+import requests
+import webbrowser
 
 
 class AuthManager:
@@ -73,9 +76,8 @@ class AuthManager:
             def log_message(self, format, *args):
                 pass
 
-        server = HTTPServer(("127.0.0.1", 0), CallbackHandler)
+        server = HTTPServer(("127.0.0.1", 8765), CallbackHandler)
         port = server.server_address[1]
-        print(f"[Auth] Callback server started on port {port}")
 
         thread = Thread(target=server.serve_forever, daemon=True)
         thread.start()
@@ -87,3 +89,96 @@ class AuthManager:
             return result["code"], result["state_valid"]
 
         return port, wait_for_callback
+
+    def initiate_login(self) -> Tuple[int, str, Callable[[int], Tuple[Optional[str], bool]]]:
+        """
+        Start login flow: generate PKCE, start callback server, open browser to Auth0.
+        Returns (port, code_verifier, wait_for_callback) for token exchange.
+        """
+        verifier, challenge = self._generate_pkce_pair()
+        state = self._generate_state()
+
+        print(f"[Auth] Generated PKCE verifier: {verifier[:16]}...")
+        print(f"[Auth] Generated state: {state[:16]}...")
+
+        port, wait_for_callback = self._start_callback_server(expected_state=state)
+
+        print(f"[Auth] Callback server listening on port {port}")
+
+        #temporary fixed port for callback
+        redirect_uri = f"http://127.0.0.1:8765/callback"
+        params = {
+            "response_type": "code",
+            "client_id": self.CLIENT_ID,
+            "redirect_uri": redirect_uri,
+            "scope": self.SCOPES,
+            "audience": self.AUDIENCE,
+            "code_challenge": challenge,
+            "code_challenge_method": "S256",
+            "state": state,
+        }
+        authorization_url = (
+            f"https://{self.AUTH0_DOMAIN}/authorize?{urlencode(params)}"
+        )
+
+        print(f"[Auth] Opening browser to Auth0...")
+        print(f"[Auth] Authorization URL: {authorization_url[:80]}...")
+
+        webbrowser.open(authorization_url)
+
+        return port, verifier, wait_for_callback
+
+    def exchange_code_for_tokens(
+        self, code: str, code_verifier: str, redirect_uri: str
+    ) -> Optional[dict]:
+        """
+        Exchange authorization code for tokens.
+        Returns dict with access_token, id_token, refresh_token, expires_in or None on failure.
+        """
+        token_url = f"https://{self.AUTH0_DOMAIN}/oauth/token"
+        payload = {
+            "grant_type": "authorization_code",
+            "client_id": self.CLIENT_ID,
+            "code": code,
+            "code_verifier": code_verifier,
+            "redirect_uri": redirect_uri,
+        }
+
+        print(f"[Auth] Exchanging code for tokens...")
+
+        response = requests.post(
+            token_url,
+            data=payload,
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
+            timeout=10,
+        )
+
+        print(f"[Auth] Token exchange response status: {response.status_code}")
+
+        if not response.ok:
+            print(f"[Auth] Token exchange failed: {response.text}")
+            return None
+
+        data = response.json()
+        access_token = data.get("access_token") or ""
+        refresh_token = data.get("refresh_token")
+        expires_in = data.get("expires_in", 0)
+
+        print(f"[Auth] Received access_token: {access_token[:20]}...")
+        print(f"[Auth] Received refresh_token: {'yes' if refresh_token else 'no'}")
+        print(f"[Auth] Token expires in: {expires_in}s")
+
+        return data
+
+
+if __name__ == "__main__":
+    mgr = AuthManager()
+    redirect_uri = "http://127.0.0.1:8765/callback"
+    port, verifier, wait = mgr.initiate_login()
+    print(f"[Auth] Waiting for callback (port={port}). Log in in the browser...")
+    code, ok = wait(timeout=60)
+    print(f"[Auth] Result: code={'...' if code else None}, state_valid={ok}")
+    if code and ok:
+        tokens = mgr.exchange_code_for_tokens(code, verifier, redirect_uri)
+        if tokens:
+            print(f"[Auth] Success! access_token present: {bool(tokens.get('access_token'))}")
