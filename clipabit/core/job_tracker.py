@@ -1,6 +1,5 @@
 from PyQt6.QtCore import QThread, pyqtSignal
 from threading import Lock
-from typing import Optional
 import requests
 import time
 import traceback
