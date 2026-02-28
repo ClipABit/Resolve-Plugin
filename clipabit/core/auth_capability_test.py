@@ -3,12 +3,7 @@ Test script to verify auth capabilities in Resolve environment.
 Run this from within Resolve to check if PKCE auth flow will work.
 """
 import webbrowser
-import socket
 from http.server import HTTPServer, BaseHTTPRequestHandler
-from threading import Thread
-import time
-
-
 def test_browser_open() -> dict:
     """Test 1: Can we open the system browser?"""
     result = {"test": "browser_open", "success": False, "message": ""}
