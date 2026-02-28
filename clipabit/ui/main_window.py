@@ -213,7 +213,7 @@ class ClipABitApp(QWidget):
         center_layout.setSpacing(30)
         
         # Tagline text (centered, no logo)
-        tagline = QLabel("Search by idea's, not timestamps.")
+        tagline = QLabel("Search by ideas, not timestamps.")
         tagline.setAlignment(Qt.AlignmentFlag.AlignCenter)
         tagline.setObjectName("taglineLabel")
         center_layout.addWidget(tagline)
