@@ -12,11 +12,12 @@ class JobTracker(QThread):
     job_completed = pyqtSignal(str, dict)  # job_id, result
     job_failed = pyqtSignal(str, str)      # job_id, error
     
-    def __init__(self):
+    def __init__(self, auth_manager=None):
         super().__init__()
         self.jobs_to_track = {}  # job_id -> job_info
         self.lock = Lock()
         self.running = True
+        self.auth_manager = auth_manager
         
     def add_job(self, job_id: str, job_info: dict):
         """Add a job to track."""
@@ -34,7 +35,24 @@ class JobTracker(QThread):
             
             for job_id, job_info in current_jobs.items():
                 try:
-                    response = requests.get(Config.STATUS_API_URL, params={"job_id": job_id}, timeout=Config.STATUS_CHECK_TIMEOUT)
+                    if not self.auth_manager:
+                        response = requests.get(
+                            Config.STATUS_API_URL,
+                            params={"job_id": job_id},
+                            timeout=Config.STATUS_CHECK_TIMEOUT,
+                        )
+                    else:
+                        def make_request(token):
+                            headers = {"Authorization": f"Bearer {token}"} if token else {}
+                            if token:
+                                print("[Auth] Adding Bearer token to status request")
+                            return requests.get(
+                                Config.STATUS_API_URL,
+                                params={"job_id": job_id},
+                                headers=headers,
+                                timeout=Config.STATUS_CHECK_TIMEOUT,
+                            )
+                        response = self.auth_manager.execute_with_auth_retry("status", make_request)
                     if response.status_code == 200:
                         data = response.json()
                         status = data.get("status", "processing")
