@@ -6,7 +6,7 @@ import base64
 import time
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from pathlib import Path
-from threading import Event, Thread
+from threading import Event, Lock, Thread
 from urllib.parse import parse_qs, urlparse, urlencode
 from typing import Callable, Optional, Tuple
 
@@ -45,6 +45,7 @@ class AuthManager:
             )
 
         self.on_reauth_required: Optional[Callable[[], None]] = None
+        self._token_lock = Lock()
 
         print(f"[Auth] Config loaded: domain={self.AUTH0_DOMAIN}")
         print(f"[Auth] Config loaded: client_id present: {bool(self.CLIENT_ID)}")
@@ -97,7 +98,8 @@ class AuthManager:
                     self.send_header("Content-type", "text/html")
                     self.end_headers()
                     logo_svg = (_RESOURCES_DIR / "logo.svg").read_text(encoding="utf-8")
-                    if error:
+                    # Treat state mismatch as an error (CSRF protection: invalid state = possible token theft)
+                    if error or not result["state_valid"]:
                         template = (_RESOURCES_DIR / "callback_error.html").read_text(encoding="utf-8")
                     else:
                         template = (_RESOURCES_DIR / "callback_success.html").read_text(encoding="utf-8")
@@ -230,8 +232,12 @@ class AuthManager:
             "id_token": id_token,
             "expires_at": expires_at,
         }
-        keyring.set_password(SERVICE_NAME, KEYRING_USERNAME, json.dumps(data))
-        print("[Auth] Tokens saved successfully")
+        try:
+            keyring.set_password(SERVICE_NAME, KEYRING_USERNAME, json.dumps(data))
+            print("[Auth] Tokens saved successfully")
+        except Exception as e:
+            print(f"[Auth] Failed to save tokens to keyring: {e}")
+            print("[Auth] Keyring backend may be unavailable; tokens will not persist")
 
     def _load_tokens(self) -> Optional[dict]:
         """Retrieve tokens from keyring. Returns dict or None."""
@@ -325,23 +331,25 @@ class AuthManager:
         """
         Return a valid access token. Refreshes automatically if expired.
         Returns None if no tokens stored or refresh fails.
+        Thread-safe: serializes concurrent refresh attempts.
         """
-        tokens = self._load_tokens()
-        if not tokens:
-            return None
-
-        access_token = tokens.get("access_token")
-        expires_at = tokens.get("expires_at", 0)
-        # Refresh if expired or within 60s (buffer)
-        if not access_token or time.time() >= (expires_at - 60):
-            refreshed = self._refresh_tokens(tokens)
-            if refreshed:
-                access_token = refreshed.get("access_token")
-            else:
+        with self._token_lock:
+            tokens = self._load_tokens()
+            if not tokens:
                 return None
 
-        print("[Auth] Returning valid access token")
-        return access_token
+            access_token = tokens.get("access_token")
+            expires_at = tokens.get("expires_at", 0)
+            # Refresh if expired or within 60s (buffer)
+            if not access_token or time.time() >= (expires_at - 60):
+                refreshed = self._refresh_tokens(tokens)
+                if refreshed:
+                    access_token = refreshed.get("access_token")
+                else:
+                    return None
+
+            print("[Auth] Returning valid access token")
+            return access_token
 
     def execute_with_auth_retry(
         self, endpoint: str, make_request: Callable[[Optional[str]], requests.Response]
