@@ -125,6 +125,8 @@ class AuthManager:
                 print("[Auth] Login cancelled by user")
             print("[Auth] Callback server shutting down")
             server.shutdown()
+            server.server_close()
+            thread.join()
             return result["code"], result["state_valid"]
 
         return port, wait_for_callback
