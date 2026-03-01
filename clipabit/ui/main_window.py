@@ -18,7 +18,6 @@ try:
     from PyQt6.QtSvgWidgets import QSvgWidget
 except ImportError as e:
     print(f"Error: PyQt6 not found or missing component: {e}")
-    print(f"Error: PyQt6 not found or missing component: {e}")
     # We can't exit here if imported by shim, but we log the issue
     print("Warning: PyQt6 import failed in main_window.py")
 
