@@ -45,7 +45,7 @@ class JobTracker(QThread):
                         def make_request(token):
                             headers = {"Authorization": f"Bearer {token}"} if token else {}
                             if token:
-                                print(f"[Auth] Adding Bearer token to status request")
+                                print("[Auth] Adding Bearer token to status request")
                             return requests.get(
                                 Config.STATUS_API_URL,
                                 params={"job_id": job_id},

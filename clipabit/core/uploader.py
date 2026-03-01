@@ -56,7 +56,7 @@ class FileUploader(QThread):
                 headers = {}
                 if token:
                     headers["Authorization"] = f"Bearer {token}"
-                    print(f"[Auth] Adding Bearer token to upload request")
+                    print("[Auth] Adding Bearer token to upload request")
                 fd = [("files", (self.filename, open(self.filepath, 'rb'), "video/mp4"))]
                 try:
                     return session.post(
