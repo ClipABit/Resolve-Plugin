@@ -32,8 +32,6 @@ from ..core.uploader import FileUploader
 from ..api.auth_manager import AuthManager
 from .theme import Theme
 
-REDIRECT_URI = "http://127.0.0.1:8765/callback"
-
 
 class LoginWorker(QThread):
     """Background thread for auth flow so UI stays responsive."""
@@ -57,7 +55,7 @@ class LoginWorker(QThread):
                 print("[Auth] Error: Login cancelled")
                 self.login_finished.emit(False, "Login cancelled")
                 return
-            tokens = self.auth_manager.exchange_code_for_tokens(code, verifier, REDIRECT_URI)
+            tokens = self.auth_manager.exchange_code_for_tokens(code, verifier, f"http://127.0.0.1:{port}/callback")
             if tokens:
                 self.status_updated.emit("Login successful!")
                 print("[Auth] Status: Login successful!")
@@ -119,15 +117,22 @@ class ClipABitApp(QWidget):
         self.is_uploading = False  # Flag to prevent concurrent uploads
         
         # Auth manager and token getter for API calls
-        self.auth_manager = AuthManager()
+        try:
+            self.auth_manager = AuthManager()
+        except ValueError as e:
+            print(f"[Auth] Configuration error: {e}")
+            self.auth_manager = None
 
-        def _do_reauth_prompt():
-            self._update_auth_button()
-            QMessageBox.warning(self, "Session Expired", "Please sign in again.")
+        if self.auth_manager is not None:
+            def _do_reauth_prompt():
+                self._update_auth_button()
+                QMessageBox.warning(self, "Session Expired", "Please sign in again.")
 
-        self.auth_manager.on_reauth_required = lambda: QTimer.singleShot(0, self, _do_reauth_prompt)
+            self.auth_manager.on_reauth_required = lambda: QTimer.singleShot(0, self, _do_reauth_prompt)
 
         def token_getter():
+            if self.auth_manager is None:
+                return None
             return self.auth_manager.get_valid_access_token()
         self._token_getter = token_getter
 
@@ -156,7 +161,7 @@ class ClipABitApp(QWidget):
         self._apply_theme()
 
         # Startup auth check
-        is_logged_in = self.auth_manager.is_logged_in()
+        is_logged_in = self.auth_manager.is_logged_in() if self.auth_manager else False
         print(f"[Auth] Startup check: logged_in={is_logged_in}")
         self._update_auth_button()
         
@@ -276,7 +281,7 @@ class ClipABitApp(QWidget):
     
     def _update_ui_for_auth_state(self):
         """Show/hide UI elements based on authentication state."""
-        is_logged_in = self.auth_manager.is_logged_in()
+        is_logged_in = self.auth_manager.is_logged_in() if self.auth_manager else False
         
         # Toggle visibility of content areas
         self.get_started_content.setVisible(not is_logged_in)
@@ -299,6 +304,7 @@ class ClipABitApp(QWidget):
         logo_path = Path(__file__).parent.parent.parent / "assets" / "logo-dark.svg"
         if logo_path.exists():
             self.logo_widget = QSvgWidget(str(logo_path))
+            self.logo_widget.setObjectName("logoWidget")
             self.logo_widget.setFixedSize(130, 60)  # Maintains ~2.17:1 aspect ratio
         else:
             self.logo_widget = QLabel("ClipABit")
@@ -345,7 +351,7 @@ class ClipABitApp(QWidget):
     
     def _update_auth_button(self):
         """Update Sign In/Sign Out button based on login state."""
-        if self.auth_manager.is_logged_in():
+        if self.auth_manager and self.auth_manager.is_logged_in():
             self.btn_auth.setText("Sign Out")
         else:
             self.btn_auth.setText("Sign In")
@@ -355,6 +361,9 @@ class ClipABitApp(QWidget):
 
     def _on_auth_button_clicked(self):
         """Handle Sign In or Sign Out button click."""
+        if self.auth_manager is None:
+            QMessageBox.warning(self, "Configuration Error", "Auth0 environment variables are not set.")
+            return
         if self.auth_manager.is_logged_in():
             print("[Auth] Sign Out button clicked")
             self.auth_manager.delete_tokens()
@@ -1089,7 +1098,7 @@ class ClipABitApp(QWidget):
 
     def _delete_backend_entry(self, filename: str, hashed_identifier: str, namespace: str):
         """Request backend deletion for a file's Pinecone data."""
-        if not self.auth_manager.is_logged_in():
+        if not self.auth_manager or not self.auth_manager.is_logged_in():
             return
         try:
             def make_request(token):
@@ -1348,7 +1357,7 @@ class ClipABitApp(QWidget):
         project_safe = project_name.lower().replace(" ", "_")
         namespace = f"{user_id_safe}-{project_safe}"
         
-        if not self.auth_manager.is_logged_in():
+        if not self.auth_manager or not self.auth_manager.is_logged_in():
             QMessageBox.warning(self, "Sign In Required", "Please sign in to search.")
             return
         
