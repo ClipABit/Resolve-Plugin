@@ -1096,7 +1096,7 @@ class ClipABitApp(QWidget):
             def make_request(token):
                 headers = {"Authorization": f"Bearer {token}"} if token else {}
                 if token:
-                    print(f"[Auth] Adding Bearer token to delete request")
+                    print("[Auth] Adding Bearer token to delete request")
                     print(f"[Auth] Token: {token[:20]}...")
                 return requests.delete(
                     Config.DELETE_API_URL,
@@ -1362,7 +1362,7 @@ class ClipABitApp(QWidget):
             def make_request(token):
                 headers = {"Authorization": f"Bearer {token}"} if token else {}
                 if token:
-                    print(f"[Auth] Adding Bearer token to search request")
+                    print("[Auth] Adding Bearer token to search request")
                     print(f"[Auth] Token: {token[:20]}...")
                 return requests.get(Config.SEARCH_API_URL, params=params, headers=headers, timeout=30)
             response = self.auth_manager.execute_with_auth_retry("search", make_request)

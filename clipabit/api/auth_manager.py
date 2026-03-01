@@ -278,7 +278,7 @@ class AuthManager:
         print(f"[Auth] Callback server listening on port {port}")
 
         #temporary fixed port for callback
-        redirect_uri = f"http://127.0.0.1:8765/callback"
+        redirect_uri = "http://127.0.0.1:8765/callback"
         params = {
             "response_type": "code",
             "client_id": self.CLIENT_ID,
@@ -293,7 +293,7 @@ class AuthManager:
             f"https://{self.AUTH0_DOMAIN}/authorize?{urlencode(params)}"
         )
 
-        print(f"[Auth] Opening browser to Auth0...")
+        print("[Auth] Opening browser to Auth0...")
         print(f"[Auth] Authorization URL: {authorization_url[:80]}...")
 
         webbrowser.open(authorization_url)
@@ -316,7 +316,7 @@ class AuthManager:
             "redirect_uri": redirect_uri,
         }
 
-        print(f"[Auth] Exchanging code for tokens...")
+        print("[Auth] Exchanging code for tokens...")
 
         response = requests.post(
             token_url,
@@ -356,11 +356,11 @@ class AuthManager:
             "expires_at": expires_at,
         }
         keyring.set_password(SERVICE_NAME, KEYRING_USERNAME, json.dumps(data))
-        print(f"[Auth] Tokens saved successfully")
+        print("[Auth] Tokens saved successfully")
 
     def _load_tokens(self) -> Optional[dict]:
         """Retrieve tokens from keyring. Returns dict or None."""
-        print(f"[Auth] Loading tokens from keyring...")
+        print("[Auth] Loading tokens from keyring...")
         raw = keyring.get_password(SERVICE_NAME, KEYRING_USERNAME)
         if not raw:
             return None
@@ -380,7 +380,7 @@ class AuthManager:
 
     def delete_tokens(self) -> None:
         """Clear tokens from keyring (logout)."""
-        print(f"[Auth] Clearing tokens from keyring...")
+        print("[Auth] Clearing tokens from keyring...")
         try:
             keyring.delete_password(SERVICE_NAME, KEYRING_USERNAME)
         except Exception:
@@ -400,8 +400,8 @@ class AuthManager:
             "refresh_token": tokens["refresh_token"],
         }
 
-        print(f"[Auth] Access token expired, refreshing...")
-        print(f"[Auth] Refresh request sent")
+        print("[Auth] Access token expired, refreshing...")
+        print("[Auth] Refresh request sent")
 
         response = requests.post(
             token_url,
@@ -424,7 +424,7 @@ class AuthManager:
 
         expires_at = time.time() + expires_in
         self._save_tokens(access_token, refresh_token, id_token, expires_at)
-        print(f"[Auth] Tokens updated in keyring")
+        print("[Auth] Tokens updated in keyring")
 
         return {"access_token": access_token, "expires_at": expires_at}
 
@@ -447,7 +447,7 @@ class AuthManager:
             else:
                 return None
 
-        print(f"[Auth] Returning valid access token")
+        print("[Auth] Returning valid access token")
         return access_token
 
     def execute_with_auth_retry(
