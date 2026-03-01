@@ -111,7 +111,17 @@ class AuthManager:
             def log_message(self, format, *args):
                 pass
 
-        server = HTTPServer(("127.0.0.1", 8765), CallbackHandler)
+        try:
+            server = HTTPServer(("127.0.0.1", 8765), CallbackHandler)
+        except OSError as e:
+            print(f"[Auth] Failed to bind callback server to port 8765: {e}")
+            print("[Auth] Falling back to an ephemeral port assigned by the OS")
+            try:
+                server = HTTPServer(("127.0.0.1", 0), CallbackHandler)
+            except OSError as e2:
+                print(f"[Auth] Failed to bind callback server to an ephemeral port: {e2}")
+                print("[Auth] Unable to start local callback server for login flow")
+                raise
         port = server.server_address[1]
 
         thread = Thread(target=server.serve_forever, daemon=True)
