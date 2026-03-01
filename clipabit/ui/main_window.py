@@ -126,7 +126,7 @@ class ClipABitApp(QWidget):
             self._update_auth_button()
             QMessageBox.warning(self, "Session Expired", "Please sign in again.")
 
-        self.auth_manager.on_reauth_required = lambda: QTimer.singleShot(0, _do_reauth_prompt)
+        self.auth_manager.on_reauth_required = lambda: QTimer.singleShot(0, self, _do_reauth_prompt)
 
         def token_getter():
             return self.auth_manager.get_valid_access_token()
