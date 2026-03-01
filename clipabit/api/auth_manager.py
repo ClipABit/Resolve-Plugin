@@ -231,18 +231,33 @@ class AuthManager:
             return None
         try:
             data = json.loads(raw)
+            if not isinstance(data, dict):
+                print("[Auth] Stored token data is not a JSON object; clearing tokens")
+                self.delete_tokens()
+                return None
             access = bool(data.get("access_token"))
             refresh = bool(data.get("refresh_token"))
             print(f"[Auth] Tokens loaded: access={'yes' if access else 'no'}, refresh={'yes' if refresh else 'no'}")
+            # Require at least one of access_token or refresh_token to consider tokens valid
+            if not (access or refresh):
+                print("[Auth] Token data missing access_token and refresh_token; clearing tokens")
+                self.delete_tokens()
+                return None
             return data
         except json.JSONDecodeError:
+            print("[Auth] Failed to decode token JSON; clearing tokens")
+            self.delete_tokens()
             return None
 
     def is_logged_in(self) -> bool:
-        """Check if tokens are stored in keyring (logged in)."""
+        """Check if valid tokens are stored in keyring (logged in)."""
         try:
-            raw = keyring.get_password(SERVICE_NAME, KEYRING_USERNAME)
-            return raw is not None and len(raw) > 0
+            tokens = self._load_tokens()
+            if not tokens:
+                return False
+            has_access = bool(tokens.get("access_token"))
+            has_refresh = bool(tokens.get("refresh_token"))
+            return has_access or has_refresh
         except Exception:
             return False
 
