@@ -41,7 +41,7 @@
     [
       "@semantic-release/changelog",
       {
-        "changelogFile": "plugin/CHANGELOG.md"
+        "changelogFile": "CHANGELOG.md"
       }
     ],
     [
@@ -55,8 +55,8 @@
       "@semantic-release/git",
       {
         "assets": [
-          "plugin/CHANGELOG.md",
-          "plugin/pyproject.toml"
+          "CHANGELOG.md",
+          "pyproject.toml"
         ],
         "message": "chore(release): ${nextRelease.version} [skip ci]\n\n${nextRelease.notes}"
       }

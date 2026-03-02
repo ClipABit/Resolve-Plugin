@@ -30,119 +30,112 @@ logger = logging.getLogger("watch_clipabit")
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 
 
-DEFAULT_SOURCE = Path("../../frontend/plugin/clipabit.py")
-DEFAULT_COPY_NAME = "clipabit.py"
+DEFAULT_SOURCE = Path(".")
+DEFAULT_SHIM_NAME = "ClipABit.py"
+DEFAULT_PACKAGE_NAME = "clipabit"
 
 
-def get_resolve_script_dir():
-    """
-    Returns the Path object for the DaVinci Resolve Utility Scripts directory
-    based on the current operating system.
-    """
+def get_resolve_fusion_dir():
+    """Returns the base Fusion path."""
     home = Path.home()
     system = platform.system()
 
     if system == "Windows":
-        # Windows: %APPDATA%\Blackmagic Design\DaVinci Resolve\Support\Fusion\Scripts\Utility
-        # We use os.environ for APPDATA to be safer than hardcoding 'AppData/Roaming'
         base_path = Path(os.environ.get("APPDATA", home / "AppData" / "Roaming"))
-        return base_path / "Blackmagic Design" / "DaVinci Resolve" / "Support" / "Fusion" / "Scripts" / "Utility"
-        
-    elif system == "Darwin":  # macOS
-        # Mac: ~/Library/Application Support/Blackmagic Design/DaVinci Resolve/Fusion/Scripts/Utility
-        return home / "Library" / "Application Support" / "Blackmagic Design" / "DaVinci Resolve" / "Fusion" / "Scripts" / "Utility"
-    
-    else:  # Linux
-        # Linux: ~/.local/share/DaVinci Resolve/Fusion/Scripts/Utility
-        # (Standard installation path for user-specific scripts)
-        return home / ".local" / "share" / "DaVinci Resolve" / "Fusion" / "Scripts" / "Utility"   
+        return base_path / "Blackmagic Design" / "DaVinci Resolve" / "Support" / "Fusion"
+    elif system == "Darwin":
+        return home / "Library" / "Application Support" / "Blackmagic Design" / "DaVinci Resolve" / "Fusion"
+    else:
+        return home / ".local" / "share" / "DaVinci Resolve" / "Fusion"
 
 
-def copy_file(src: Path, dst_dir: Path, dst_name: str = None) -> None:
-    dst_dir = dst_dir.expanduser()
-    if dst_name is None:
-        dst_name = src.name
-
-    dst_dir.mkdir(parents=True, exist_ok=True)
-    dst = dst_dir / dst_name
-
-    try:
-        shutil.copy2(str(src), str(dst))
-        logger.info("Copied %s -> %s", src, dst)
-    except Exception as e:
-        logger.error("Failed to copy %s -> %s: %s", src, dst, e)
+def get_resolve_paths():
+    """Returns dictionary of relevant Resolve paths."""
+    fusion = get_resolve_fusion_dir()
+    return {
+        "fusion": fusion,
+        "utility": fusion / "Scripts" / "Utility",
+        "modules": fusion / "Modules"
+    }
 
 
-def run_polling(src: Path, dst_dir: Path, dst_name: str = None, interval: float = 0.5):
-    """Fallback polling loop if watchdog is not installed."""
-    if not src.exists():
-        logger.warning("Source file does not exist yet: %s", src)
+def sync_plugin(src_root: Path, paths: dict):
+    """Sync all plugin parts to Resolve."""
+    # 1. Sync Shim
+    shim_src = src_root / "clipabit.py"
+    if shim_src.exists():
+        dst_utility = paths["utility"]
+        dst_utility.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(shim_src, dst_utility / DEFAULT_SHIM_NAME)
+        logger.info("Synced Shim: %s -> %s", shim_src.name, dst_utility / DEFAULT_SHIM_NAME)
 
+    # 2. Sync Package
+    pkg_src = src_root / "clipabit"
+    if pkg_src.exists():
+        dst_modules_parent = paths["modules"]
+        dst_modules_parent.mkdir(parents=True, exist_ok=True)
+        dst_modules = dst_modules_parent / "clipabit"
+        if dst_modules.exists():
+            shutil.rmtree(dst_modules)
+        shutil.copytree(pkg_src, dst_modules)
+        logger.info("Synced Package: %s -> %s", pkg_src.name, dst_modules)
+
+
+def run_polling(src: Path, paths: dict, interval: float = 0.5):
+    """Fallback polling loop."""
+    logger.info("Polling started for %s", src)
     last_mtime = None
-    try:
-        while True:
-            try:
-                mtime = src.stat().st_mtime if src.exists() else None
-            except Exception:
-                mtime = None
-
-            if mtime is not None and mtime != last_mtime:
+    while True:
+        try:
+            # Check for any change in the whole plugin tree
+            mtime = 0
+            for p in src.rglob("*"):
+                if p.is_file():
+                    mtime = max(mtime, p.stat().st_mtime)
+            
+            if mtime > (last_mtime or 0):
                 last_mtime = mtime
-                copy_file(src, dst_dir, dst_name)
+                sync_plugin(src, paths)
+        except Exception as e:
+            logger.error("Polling error: %s", e)
+        time.sleep(interval)
 
-            time.sleep(interval)
-    except KeyboardInterrupt:
-        logger.info("Polling watcher stopped by user")
 
-
-def run_watchdog(src: Path, dst_dir: Path, dst_name: str = None):
-    """Use watchdog to observe the file and copy on modifications."""
+def run_watchdog(src: Path, paths: dict):
+    """Use watchdog to observe the directory."""
     try:
         from watchdog.observers import Observer
         from watchdog.events import FileSystemEventHandler
-    except Exception as e:
-        logger.warning("watchdog not available (%s), falling back to polling", e)
-        return run_polling(src, dst_dir, dst_name)
+    except ImportError:
+        return run_polling(src, paths)
 
     class Handler(FileSystemEventHandler):
-        def __init__(self, src_path: Path, dst_dir: Path, dst_name: str | None):
-            super().__init__()
-            self.src_path = src_path.resolve()
-            self.dst_dir = dst_dir
-            self.dst_name = dst_name
-            self._last_copied = 0.0
+        def __init__(self, src_root: Path, paths: dict):
+            self.src_root = src_root.resolve()
+            self.paths = paths
+            self._last_sync = 0.0
 
-        def on_modified(self, event):
-            try:
-                event_path = Path(event.src_path).resolve()
-            except Exception:
+        def on_any_event(self, event):
+            if event.is_directory:
                 return
-
-            # Debounce quick successive events (editors often trigger multiple events)
+            
+            # Debounce
             now = time.time()
-            if (now - self._last_copied) < 0.2:
+            if (now - self._last_sync) < 0.5:
                 return
-
-            if event_path == self.src_path:
-                self._last_copied = now
-                copy_file(self.src_path, self.dst_dir, self.dst_name)
-
-        # Some editors replace files (moved/created) — copy on created too
-        def on_created(self, event):
+            
+            # Check if it's inside our plugin dir
             try:
                 event_path = Path(event.src_path).resolve()
+                if self.src_root in event_path.parents or event_path == self.src_root:
+                    self._last_sync = now
+                    sync_plugin(self.src_root, self.paths)
             except Exception:
-                return
+                pass
 
-            if event_path == self.src_path:
-                copy_file(self.src_path, self.dst_dir, self.dst_name)
-
-    handler = Handler(src.resolve(), dst_dir, dst_name)
+    handler = Handler(src, paths)
     observer = Observer()
-
-    # Watch the parent directory of the source file
-    watch_dir = str(src.resolve().parent)
-    observer.schedule(handler, watch_dir, recursive=False)
+    observer.schedule(handler, str(src.resolve()), recursive=True)
     observer.start()
     logger.info("Started watchdog observer for %s", src)
 
@@ -150,58 +143,38 @@ def run_watchdog(src: Path, dst_dir: Path, dst_name: str = None):
         while True:
             time.sleep(1)
     except KeyboardInterrupt:
-        logger.info("Stopping observer")
         observer.stop()
-
     observer.join()
 
 
 def parse_args() -> argparse.Namespace:
-    p = argparse.ArgumentParser(description="Watch ClipABit.py and copy to DaVinci Resolve Utility folder")
-    p.add_argument("--source", "-s", type=str, default=str(DEFAULT_SOURCE), help="Path to local ClipABit.py (relative to repo root or absolute)")
-    p.add_argument("--dest", "-d", type=str, default=str(get_resolve_script_dir()), help="Destination Utility folder")
-    p.add_argument("--name", "-n", type=str, default=DEFAULT_COPY_NAME, help="Filename to write at destination")
-    p.add_argument("--poll-interval", type=float, default=0.5, help="Polling interval when watchdog unavailable")
+    p = argparse.ArgumentParser(description="Watch ClipABit plugin folder and sync to Resolve")
+    p.add_argument("--source", "-s", type=str, default=str(DEFAULT_SOURCE), help="Path to plugin/ folder")
+    p.add_argument("--poll", action="store_true", help="Force polling mode")
     return p.parse_args()
 
 
 def main():
     args = parse_args()
-    src = Path(args.source).expanduser()
-    dst_dir = Path(args.dest).expanduser()
+    script_dir = Path(__file__).resolve().parent
+    src = (script_dir / args.source).resolve()
+    
+    if not src.exists():
+        logger.error("Source directory not found: %s", src)
+        return
 
-    # If source is relative, resolve relative to repository root
-    if not src.is_absolute():
-        # Script is in utils/plugins/davinci/, so go up 3 levels to get to repo root
-        # __file__ = monorepo-1/utils/plugins/davinci/watch_clipabit.py
-        # parents[0] = monorepo-1/utils/plugins/davinci/
-        # parents[1] = monorepo-1/utils/plugins/
-        # parents[2] = monorepo-1/utils/
-        # parents[3] = monorepo-1/ (repo root)
-        script_path = Path(__file__).resolve()
-        repo_root = script_path.parents[3]
-        # Remove leading ../ from the source path if present
-        src_str = str(src).replace('\\', '/')
-        # Remove all leading ../ parts
-        while src_str.startswith('../'):
-            src_str = src_str[3:]  # Remove one ../
-        src = (repo_root / src_str).resolve()
+    resolve_paths = get_resolve_paths()
+    logger.info("Watching: %s", src)
+    logger.info("Target Utility: %s", resolve_paths["utility"])
+    logger.info("Target Modules: %s", resolve_paths["modules"])
 
-    logger.info("Watching source: %s", src)
-    logger.info("Destination directory: %s", dst_dir)
+    # Initial sync
+    sync_plugin(src, resolve_paths)
 
-    # Copy once at startup so target is up-to-date before watching
-    if src.exists():
-        copy_file(src, dst_dir, args.name)
+    if args.poll:
+        run_polling(src, resolve_paths)
     else:
-        logger.warning("Source file does not exist at startup: %s", src)
-
-    # Try the event-driven watcher first
-    try:
-        run_watchdog(src, dst_dir, args.name)
-    except Exception as e:
-        logger.exception("Watchdog observer failed, falling back to polling: %s", e)
-        run_polling(src, dst_dir, args.name, interval=args.poll_interval)
+        run_watchdog(src, resolve_paths)
 
 
 if __name__ == "__main__":

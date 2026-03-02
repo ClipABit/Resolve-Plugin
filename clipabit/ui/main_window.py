@@ -2,178 +2,105 @@ import sys
 import os
 import requests
 import uuid
-import hashlib
-import platform
-import json
 import time
 import traceback
+import platform
+import hashlib
 from pathlib import Path
 from typing import Dict, List, Optional
 
-# Try to import PyQt6
 try:
     from PyQt6.QtWidgets import (QApplication, QWidget, QVBoxLayout, QHBoxLayout,
                                  QLabel, QPushButton, QMessageBox, QLineEdit,
-                                 QScrollArea, QFrame, QListWidget, QListWidgetItem,
-                                 QDialog, QCheckBox, QGridLayout)
+                                 QScrollArea, QFrame, QListWidget,
+                                 QDialog, QCheckBox, QGridLayout, QProgressBar)
     from PyQt6.QtCore import Qt, QTimer, QThread, pyqtSignal
+    from PyQt6.QtSvgWidgets import QSvgWidget
 except ImportError as e:
     print(f"Error: PyQt6 not found or missing component: {e}")
-    print("Please run 'pip install PyQt6'")
-    sys.exit(1)
+    # We can't exit here if imported by shim, but we log the issue
+    print("Warning: PyQt6 import failed in main_window.py")
 
-# --- Theme Configuration ---
-class Theme:
-    """Color theme for the UI matching Figma design."""
-    
-    # Dark theme (default)
-    DARK = {
-        'background': '#26272E',
-        'card_bg': '#3A3B42',
-        'text': '#FFFFFF',
-        'text_secondary': '#8E8E93',
-        'accent': '#F5A623',
-        'accent_hover': '#E09000',
-        'search_bg': '#F2F8FF',
-        'search_text': '#000000',
-        'search_placeholder': '#8E8E93',
-        'button_text': '#000000',
-        'border': '#4A4B52',
-    }
-    
-    # Light theme
-    LIGHT = {
-        'background': '#FFFFFF',
-        'card_bg': '#E5E5E5',
-        'text': '#000000',
-        'text_secondary': '#8E8E93',
-        'accent': '#F5A623',
-        'accent_hover': '#E09000',
-        'search_bg': '#F2F8FF',
-        'search_text': '#000000',
-        'search_placeholder': '#8E8E93',
-        'button_text': '#000000',
-        'border': '#D0D0D0',
-    }
-    
-    # Current theme (can be toggled or auto-detected)
-    current = DARK
-    
-    @classmethod
-    def detect_system_theme(cls):
-        """Detect system theme (macOS/Windows) and set current theme accordingly."""
-        try:
-            if platform.system() == 'Darwin':  # macOS
-                # Check macOS appearance setting
-                import subprocess
-                result = subprocess.run(
-                    ['defaults', 'read', '-g', 'AppleInterfaceStyle'],
-                    capture_output=True, text=True
-                )
-                # If 'Dark' is returned, system is in dark mode
-                # If command fails (exit code != 0), system is in light mode
-                if result.returncode == 0 and 'Dark' in result.stdout:
-                    cls.current = cls.DARK
-                else:
-                    cls.current = cls.LIGHT
-            elif platform.system() == 'Windows':
-                # Check Windows registry for theme
-                import winreg
-                registry = winreg.ConnectRegistry(None, winreg.HKEY_CURRENT_USER)
-                key = winreg.OpenKey(registry, r'SOFTWARE\Microsoft\Windows\CurrentVersion\Themes\Personalize')
-                value, _ = winreg.QueryValueEx(key, 'AppsUseLightTheme')
-                cls.current = cls.LIGHT if value == 1 else cls.DARK
-            else:
-                # Default to dark for Linux/other
-                cls.current = cls.DARK
-        except Exception as e:
-            print(f"Could not detect system theme: {e}, defaulting to dark")
-            cls.current = cls.DARK
+# Local imports
+from ..api.config import Config
+from ..core.job_tracker import JobTracker
+from ..core.utils import (
+    get_storage_path, load_processed_files, save_processed_files,
+    get_file_hash, get_hashed_identifier
+)
+from ..core.uploader import FileUploader
+from ..api.auth_manager import AuthManager
+from .theme import Theme
 
-# --- Configuration ---
-class Config:
-    """Configuration for ClipABit plugin."""
-    
-    # Environment (can be overridden via environment variable)
-    ENVIRONMENT = os.environ.get("CLIPABIT_ENVIRONMENT", "dev")
-    
-    # API Endpoints - dynamically constructed based on environment
-    url_portion = "" if ENVIRONMENT in ["prod", "staging"] else f"-{ENVIRONMENT}"
-    
-    SEARCH_API_URL = f"https://clipabit01--{ENVIRONMENT}-server-search{url_portion}.modal.run"
-    UPLOAD_API_URL = f"https://clipabit01--{ENVIRONMENT}-server-upload{url_portion}.modal.run"
-    STATUS_API_URL = f"https://clipabit01--{ENVIRONMENT}-server-status{url_portion}.modal.run"
-    DELETE_API_URL = f"https://clipabit01--{ENVIRONMENT}-server-delete-video{url_portion}.modal.run"
-    CHECK_API_URL = f"https://clipabit01--{ENVIRONMENT}-server-check-video{url_portion}.modal.run"
-    
-    
-    # Timeouts and delays
-    UPLOAD_TIMEOUT = 300
-    STATUS_CHECK_TIMEOUT = 10
-    STATUS_CHECK_INTERVAL = 2
-    QUEUE_DELAY = 1000  # milliseconds
-    
 
-# --- Background Job Tracker Thread ---
-class JobTracker(QThread):
-    """Background thread to track upload job status."""
-    
-    job_completed = pyqtSignal(str, dict)  # job_id, result
-    job_failed = pyqtSignal(str, str)      # job_id, error
-    
-    def __init__(self):
+class LoginWorker(QThread):
+    """Background thread for auth flow so UI stays responsive."""
+    status_updated = pyqtSignal(str)
+    login_finished = pyqtSignal(bool, str)  # success, message
+
+    def __init__(self, auth_manager: AuthManager):
         super().__init__()
-        self.jobs_to_track = {}  # job_id -> job_info
-        self.running = True
-        
-    def add_job(self, job_id: str, job_info: dict):
-        """Add a job to track."""
-        self.jobs_to_track[job_id] = job_info
-        
+        self.auth_manager = auth_manager
+
     def run(self):
-        """Main tracking loop."""
-        while self.running:
-            jobs_to_remove = []
-            
-            for job_id, job_info in self.jobs_to_track.items():
-                try:
-                    response = requests.get(Config.STATUS_API_URL, params={"job_id": job_id}, timeout=Config.STATUS_CHECK_TIMEOUT)
-                    if response.status_code == 200:
-                        data = response.json()
-                        status = data.get("status", "processing")
-                        
-                        if status == "completed":
-                            self.job_completed.emit(job_id, data)
-                            jobs_to_remove.append(job_id)
-                        elif status == "failed":
-                            error = data.get("error", "Unknown error")
-                            self.job_failed.emit(job_id, error)
-                            jobs_to_remove.append(job_id)
-                        
-                except Exception as e:
-                    error_msg = f"Error checking job {job_id}: {e}\n{traceback.format_exc()}"
-                    print(error_msg)
-                    
-            # Remove completed/failed jobs
-            for job_id in jobs_to_remove:
-                del self.jobs_to_track[job_id]
-                
-            time.sleep(Config.STATUS_CHECK_INTERVAL)
-            
-    def stop(self):
-        """Stop the tracking thread."""
-        self.running = False
-    
-# --- Setup Resolve API ---
-# We use a try-block so this script doesn't crash if you test it outside of Resolve
+        try:
+            self.status_updated.emit("Opening browser...")
+            print("[Auth] Status: Opening browser...")
+            port, verifier, wait = self.auth_manager.initiate_login()
+            self.status_updated.emit("Waiting for login...")
+            print("[Auth] Status: Waiting for login...")
+            code, ok = wait(timeout=300)
+            if not code or not ok:
+                self.status_updated.emit("Login cancelled")
+                print("[Auth] Error: Login cancelled")
+                self.login_finished.emit(False, "Login cancelled")
+                return
+            tokens = self.auth_manager.exchange_code_for_tokens(code, verifier, f"http://127.0.0.1:{port}/callback")
+            if tokens:
+                self.status_updated.emit("Login successful!")
+                print("[Auth] Status: Login successful!")
+                self.login_finished.emit(True, "Login successful!")
+            else:
+                err = "Token exchange failed"
+                self.status_updated.emit(err)
+                print(f"[Auth] Error: {err}")
+                self.login_finished.emit(False, err)
+        except Exception as e:
+            err = str(e)
+            self.status_updated.emit(err)
+            print(f"[Auth] Error: {err}")
+            self.login_finished.emit(False, err)
+
+# --- Setup Resolve API Globals ---
+resolve = None
+project = None
+media_pool = None
+project_manager = None
+
+# Try to load standalone API (local dev usage) or check for global 'app'
 try:
-    resolve = app.GetResolve()  # type: ignore  # app is provided by Resolve environment
-    project_manager = resolve.GetProjectManager()
-    project = project_manager.GetCurrentProject()
-    media_pool = project.GetMediaPool()
-except NameError:
-    print("Warning: Resolve API not found. Running in simulation mode (external).")
-    resolve, project, media_pool, = None, None, None
+    import DaVinciResolveScript as dvr_script
+    resolve = dvr_script.scriptapp("Resolve")
+except ImportError:
+    pass
+
+if not resolve:
+    # Try global app (if running directly inside Resolve console)
+    try:
+        # 'app' is often available in the console scope
+        resolve = app.GetResolve()
+    except NameError:
+        pass
+
+# If we found it during import (unlikely in package mode but possible), set up others
+if resolve:
+    try:
+        project_manager = resolve.GetProjectManager()
+        project = project_manager.GetCurrentProject()
+        media_pool = project.GetMediaPool()
+    except Exception:
+        print("Warning: Found resolve logic but failed to init project/media_pool")
+        resolve = None
 
 class ClipABitApp(QWidget):
     def __init__(self):
@@ -189,8 +116,28 @@ class ClipABitApp(QWidget):
         self.current_upload = None  # Currently uploading file info
         self.is_uploading = False  # Flag to prevent concurrent uploads
         
+        # Auth manager and token getter for API calls
+        try:
+            self.auth_manager = AuthManager()
+        except ValueError as e:
+            print(f"[Auth] Configuration error: {e}")
+            self.auth_manager = None
+
+        if self.auth_manager is not None:
+            def _do_reauth_prompt():
+                self._update_auth_button()
+                QMessageBox.warning(self, "Session Expired", "Please sign in again.")
+
+            self.auth_manager.on_reauth_required = lambda: QTimer.singleShot(0, self, _do_reauth_prompt)
+
+        def token_getter():
+            if self.auth_manager is None:
+                return None
+            return self.auth_manager.get_valid_access_token()
+        self._token_getter = token_getter
+
         # Initialize job tracker
-        self.job_tracker = JobTracker()
+        self.job_tracker = JobTracker(auth_manager=self.auth_manager)
         self.job_tracker.job_completed.connect(self._on_job_completed)
         self.job_tracker.job_failed.connect(self._on_job_failed)
         self.job_tracker.start()
@@ -212,6 +159,11 @@ class ClipABitApp(QWidget):
         self.setMinimumSize(800, 600)
         self.init_ui()
         self._apply_theme()
+
+        # Startup auth check
+        is_logged_in = self.auth_manager.is_logged_in() if self.auth_manager else False
+        print(f"[Auth] Startup check: logged_in={is_logged_in}")
+        self._update_auth_button()
         
         # Setup refresh timer (disabled by default; refresh on demand)
         self.refresh_timer = QTimer()
@@ -228,11 +180,69 @@ class ClipABitApp(QWidget):
         main_layout.setContentsMargins(0, 0, 0, 0)
         
         # Header bar with buttons (top-right)
-        header = self._create_header()
-        main_layout.addWidget(header)
+        self.header = self._create_header()
+        main_layout.addWidget(self.header)
         
-        # Content area
+        # Content area - we'll use a stacked approach with two content widgets
+        # Content for "Get Started" (sign-in) screen
+        self.get_started_content = self._create_get_started_content()
+        main_layout.addWidget(self.get_started_content, 1)
+        
+        # Content for main search screen (after login)
+        self.search_content = self._create_search_content()
+        main_layout.addWidget(self.search_content, 1)
+        
+        # Status bar (minimal)
+        self.status_label = QLabel("Ready")
+        self.status_label.setObjectName("statusBar")
+        main_layout.addWidget(self.status_label)
+        
+        self.setLayout(main_layout)
+        
+        # Show appropriate content based on login state
+        self._update_ui_for_auth_state()
+    
+    def _create_get_started_content(self):
+        """Create the 'Get Started' screen shown when not logged in."""
         content = QWidget()
+        content.setObjectName("getStartedContent")
+        layout = QVBoxLayout()
+        layout.setSpacing(0)
+        layout.setContentsMargins(0, 0, 0, 0)
+        
+        # Center container
+        center_container = QWidget()
+        center_layout = QVBoxLayout()
+        center_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        center_layout.setSpacing(30)
+        
+        # Tagline text (centered, no logo)
+        tagline = QLabel("Search by ideas, not timestamps.")
+        tagline.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        tagline.setObjectName("taglineLabel")
+        center_layout.addWidget(tagline)
+        
+        # Get Started button (yellow, rectangular)
+        self.btn_get_started = QPushButton("Get Started")
+        self.btn_get_started.setObjectName("getStartedButton")
+        self.btn_get_started.setFixedSize(240, 36)
+        self.btn_get_started.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_get_started.clicked.connect(self._on_auth_button_clicked)
+        center_layout.addWidget(self.btn_get_started, alignment=Qt.AlignmentFlag.AlignCenter)
+        
+        center_container.setLayout(center_layout)
+        
+        layout.addStretch()
+        layout.addWidget(center_container)
+        layout.addStretch()
+        
+        content.setLayout(layout)
+        return content
+    
+    def _create_search_content(self):
+        """Create the main search screen shown after login."""
+        content = QWidget()
+        content.setObjectName("searchContent")
         content_layout = QVBoxLayout()
         content_layout.setSpacing(20)
         content_layout.setContentsMargins(40, 20, 40, 40)
@@ -267,75 +277,190 @@ class ClipABitApp(QWidget):
         content_layout.addWidget(self.results_scroll, 1)
         
         content.setLayout(content_layout)
-        main_layout.addWidget(content, 1)
+        return content
+    
+    def _update_ui_for_auth_state(self):
+        """Show/hide UI elements based on authentication state."""
+        is_logged_in = self.auth_manager.is_logged_in() if self.auth_manager else False
         
-        # Status bar (minimal)
-        self.status_label = QLabel("Ready")
-        self.status_label.setObjectName("statusBar")
-        main_layout.addWidget(self.status_label)
+        # Toggle visibility of content areas
+        self.get_started_content.setVisible(not is_logged_in)
+        self.search_content.setVisible(is_logged_in)
         
-        self.setLayout(main_layout)
+        # Hide auth button in header when on get started screen
+        self.btn_auth.setVisible(is_logged_in)
     
     def _create_header(self):
-        """Create the header bar with logo, Active Jobs/Debug button and settings."""
+        """Create the header bar with logo, Active Jobs/Debug button, settings, and close button."""
         header = QWidget()
         header.setFixedHeight(80)
         header.setObjectName("header")
         
         layout = QHBoxLayout()
         layout.setContentsMargins(20, 15, 20, 15)
+        layout.setSpacing(10)
+        
+        # Logo on the left using SVG (maintain aspect ratio: original is 292x135)
+        logo_path = Path(__file__).parent.parent.parent / "assets" / "logo-dark.svg"
+        if logo_path.exists():
+            self.logo_widget = QSvgWidget(str(logo_path))
+            self.logo_widget.setObjectName("logoWidget")
+            self.logo_widget.setFixedSize(130, 60)  # Maintains ~2.17:1 aspect ratio
+        else:
+            self.logo_widget = QLabel("ClipABit")
+            self.logo_widget.setObjectName("logoWidget")
+        layout.addWidget(self.logo_widget)
         
         # Spacer to push buttons to the right
         layout.addStretch()
         
-        # Active Jobs/Debug button
-        self.btn_jobs_debug = QPushButton("Active Jobs/Debug")
-        self.btn_jobs_debug.setObjectName("headerButton")
+        # Sign In / Sign Out button (only visible when logged in)
+        self.btn_auth = QPushButton()
+        self.btn_auth.setObjectName("headerButton")
+        self.btn_auth.clicked.connect(self._on_auth_button_clicked)
+        layout.addWidget(self.btn_auth)
+        
+        # Media Pool button
+        self.btn_media_pool = QPushButton("Media Pool")
+        self.btn_media_pool.setObjectName("headerButtonSecondary")
+        self.btn_media_pool.clicked.connect(self._show_settings_dialog)
+        layout.addWidget(self.btn_media_pool)
+        
+        # Debug button
+        self.btn_jobs_debug = QPushButton("Debug")
+        self.btn_jobs_debug.setObjectName("headerButtonSecondary")
         self.btn_jobs_debug.clicked.connect(self._show_jobs_dialog)
         layout.addWidget(self.btn_jobs_debug)
         
-        # Settings button (gear icon)
-        self.btn_settings = QPushButton("⚙")
+        # Settings button (gear icon) - use image placeholder
+        self.btn_settings = QPushButton()
         self.btn_settings.setObjectName("settingsButton")
-        self.btn_settings.setFixedSize(40, 40)
+        self.btn_settings.setFixedSize(46, 45)
         self.btn_settings.clicked.connect(self._show_settings_dialog)
         layout.addWidget(self.btn_settings)
+        
+        # Close button (X) on the right
+        self.btn_close = QPushButton("✕")
+        self.btn_close.setObjectName("closeButton")
+        self.btn_close.setFixedSize(40, 40)
+        self.btn_close.clicked.connect(self.close)
+        layout.addWidget(self.btn_close)
         
         header.setLayout(layout)
         return header
     
+    def _update_auth_button(self):
+        """Update Sign In/Sign Out button based on login state."""
+        if self.auth_manager and self.auth_manager.is_logged_in():
+            self.btn_auth.setText("Sign Out")
+        else:
+            self.btn_auth.setText("Sign In")
+        
+        # Also update the UI state
+        self._update_ui_for_auth_state()
+
+    def _on_auth_button_clicked(self):
+        """Handle Sign In or Sign Out button click."""
+        if self.auth_manager is None:
+            QMessageBox.warning(self, "Configuration Error", "Auth0 environment variables are not set.")
+            return
+        if self.auth_manager.is_logged_in():
+            print("[Auth] Sign Out button clicked")
+            self.auth_manager.delete_tokens()
+            self._update_auth_button()
+            self.status_label.setText("Signed out")
+        else:
+            print("[Auth] Sign In button clicked")
+            if hasattr(self, "_login_worker") and self._login_worker and self._login_worker.isRunning():
+                return  # Already logging in
+            self._login_worker = LoginWorker(self.auth_manager)
+            self._login_worker.status_updated.connect(self.status_label.setText)
+            self._login_worker.login_finished.connect(self._on_login_finished)
+            self._login_worker.start()
+
+    def _on_login_finished(self, success: bool, message: str):
+        """Handle login flow completion."""
+        self._update_auth_button()
+        if success:
+            if self.upload_queue and not self.is_uploading:
+                QTimer.singleShot(100, self._process_upload_queue)
+        elif message != "Login successful!":
+            QMessageBox.warning(self, "Login Failed", message)
+
     def _create_search_bar(self):
-        """Create the pill-shaped search bar matching Figma design."""
+        """Create the search bar matching Figma design."""
         container = QWidget()
         container.setObjectName("searchContainer")
-        container.setFixedHeight(52)
-        container.setMinimumWidth(500)
-        container.setMaximumWidth(600)
+        container.setFixedHeight(44)
+        container.setMinimumWidth(450)
+        container.setMaximumWidth(550)
         
         layout = QHBoxLayout()
-        layout.setContentsMargins(4, 4, 4, 4)
-        layout.setSpacing(0)
+        layout.setContentsMargins(15, 4, 15, 4)
+        layout.setSpacing(10)
         
-        # Search button (left side, inside the pill)
-        self.btn_search = QPushButton("Search")
+        # Hidden search button for functionality (triggered by Enter key)
+        self.btn_search = QPushButton()
         self.btn_search.setObjectName("searchButton")
-        self.btn_search.setFixedSize(80, 44)
-        self.btn_search.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_search.setFixedSize(0, 0)  # Hidden
         self.btn_search.clicked.connect(self._perform_search)
         layout.addWidget(self.btn_search)
         
         # Search input
         self.search_input = QLineEdit()
         self.search_input.setObjectName("searchInput")
-        self.search_input.setPlaceholderText("Enter search query (e.g., 'woman walking', 'car driving')")
+        self.search_input.setPlaceholderText("Enter search query (e.g. 'woman walking', 'car driving')")
         self.search_input.returnPressed.connect(self._perform_search)
         layout.addWidget(self.search_input, 1)
+        
+        # Clear button (X) - only visible when there's text
+        self.btn_clear_search = QPushButton("✕")
+        self.btn_clear_search.setObjectName("clearSearchButton")
+        self.btn_clear_search.setFixedSize(24, 24)
+        self.btn_clear_search.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_clear_search.clicked.connect(self._clear_search)
+        self.btn_clear_search.setVisible(False)
+        layout.addWidget(self.btn_clear_search)
+        
+        # Connect text changed to show/hide clear button
+        self.search_input.textChanged.connect(self._on_search_text_changed)
         
         container.setLayout(layout)
         return container
     
+    def _clear_search(self):
+        """Clear the search input and results."""
+        self.search_input.clear()
+        self.empty_state_label.setVisible(True)
+        # Clear any existing results
+        for i in reversed(range(self.results_layout.count())):
+            widget = self.results_layout.itemAt(i).widget()
+            if widget and widget != self.empty_state_label:
+                widget.deleteLater()
+    
+    def _on_search_text_changed(self, text):
+        """Show/hide clear button based on search input text."""
+        self.btn_clear_search.setVisible(bool(text))
+
+    # --- Utility Wrappers (Delegated to core.utils) ---
+    def _get_storage_path(self) -> Path:
+        return get_storage_path()
+        
+    def _load_processed_files(self) -> Dict[str, Dict]:
+        return load_processed_files()
+        
+    def _save_processed_files(self):
+        save_processed_files(self.processed_files)
+            
+    def _get_file_hash(self, filepath: str) -> str:
+        return get_file_hash(filepath)
+
+    def _get_hashed_identifier(self, filepath: str, namespace: str, filename: str) -> str:
+        return get_hashed_identifier(filepath, namespace, filename)
+
+    # --- Methods to FILL IN ---
     def _apply_theme(self):
-        """Apply the current theme stylesheet."""
+        """Apply the current theme stylesheet matching Figma mockups."""
         t = Theme.current
         
         self.setStyleSheet(f"""
@@ -351,17 +476,65 @@ class ClipABitApp(QWidget):
                 background-color: {t['background']};
             }}
             
-            /* Header button */
-            QPushButton#headerButton {{
-                background-color: {t['card_bg']};
+            /* Logo widget - header size (rectangular) */
+            QWidget#logoWidget {{
+                background-color: transparent;
+                border-radius: 0;
+            }}
+            
+            /* Large logo for Get Started screen */
+            QWidget#largeLogoContainer {{
+                background-color: transparent;
+                border-radius: 0;
+            }}
+            
+            /* Tagline label (smaller) */
+            QLabel#taglineLabel {{
+                font-size: 18px;
+                font-weight: 400;
                 color: {t['text']};
+                padding: 15px;
+            }}
+            
+            /* Get Started button (yellow, rectangular) */
+            QPushButton#getStartedButton {{
+                background-color: #FAAF04;
+                color: {t['button_text']};
                 border: none;
-                border-radius: 16px;
+                border-radius: 0;
+                font-size: 14px;
+                font-weight: 500;
+            }}
+            QPushButton#getStartedButton:hover {{
+                background-color: #E09E04;
+            }}
+            
+            /* Header button (primary - Sign In/Out, rectangular) */
+            QPushButton#headerButton {{
+                background-color: {t['accent']};
+                color: {t['button_text']};
+                border: none;
+                border-radius: 0;
                 padding: 8px 16px;
                 font-size: 13px;
+                font-weight: 500;
             }}
             QPushButton#headerButton:hover {{
-                background-color: {t['border']};
+                background-color: {t['accent_hover']};
+            }}
+            
+            /* Header button secondary (Debug, Media Pool, rectangular) */
+            QPushButton#headerButtonSecondary {{
+                background-color: #9CA3AF;
+                color: #FFFFFF;
+                border: none;
+                border-radius: 0;
+                padding: 8px 16px;
+                font-size: 13px;
+                font-weight: 500;
+            }}
+            QPushButton#headerButtonSecondary:hover {{
+                background-color: #7B8794;
             }}
             
             /* Settings button */
@@ -375,6 +548,18 @@ class ClipABitApp(QWidget):
                 color: {t['text']};
             }}
             
+            /* Close button (X) */
+            QPushButton#closeButton {{
+                background-color: transparent;
+                color: {t['close_button']};
+                border: none;
+                font-size: 18px;
+                font-weight: bold;
+            }}
+            QPushButton#closeButton:hover {{
+                color: {t['accent']};
+            }}
+            
             /* Main title */
             QLabel#mainTitle {{
                 font-size: 32px;
@@ -383,18 +568,18 @@ class ClipABitApp(QWidget):
                 padding: 20px;
             }}
             
-            /* Search container (pill shape) */
+            /* Search container (rectangular) */
             QWidget#searchContainer {{
-                background-color: {t['search_bg']};
-                border-radius: 26px;
+                background-color: #F2F8FF;
+                border-radius: 0;
             }}
             
-            /* Search button */
+            /* Search button (hidden) */
             QPushButton#searchButton {{
                 background-color: {t['accent']};
-                color: {t['button_text']};
+                color: #000000;
                 border: none;
-                border-radius: 22px;
+                border-radius: 0;
                 font-size: 14px;
                 font-weight: 600;
             }}
@@ -402,16 +587,25 @@ class ClipABitApp(QWidget):
                 background-color: {t['accent_hover']};
             }}
             
-            /* Search input */
+            /* Search input - darker text for light background */
             QLineEdit#searchInput {{
                 background-color: transparent;
                 border: none;
-                color: {t['search_text']};
+                color: #0F1729;
                 font-size: 14px;
-                padding: 0 15px;
+                padding: 0 10px;
             }}
-            QLineEdit#searchInput::placeholder {{
-                color: {t['search_placeholder']};
+            
+            /* Clear search button */
+            QPushButton#clearSearchButton {{
+                background-color: transparent;
+                color: #979797;
+                border: none;
+                font-size: 14px;
+                font-weight: bold;
+            }}
+            QPushButton#clearSearchButton:hover {{
+                color: #666666;
             }}
             
             /* Empty state */
@@ -429,25 +623,38 @@ class ClipABitApp(QWidget):
                 background-color: {t['background']};
             }}
             
-            /* Result card */
+            /* Result card (rectangular) */
             QFrame#resultCard {{
                 background-color: {t['card_bg']};
-                border-radius: 8px;
+                border-radius: 0;
                 border: 1px solid {t['border']};
             }}
             
-            /* Thumbnail placeholder */
+            /* Thumbnail placeholder (rectangular) */
             QLabel#thumbnail {{
-                background-color: #D9D9D9;
-                border-radius: 4px;
+                background-color: {t['card_thumbnail']};
+                border-radius: 0;
             }}
             
-            /* Add to timeline button */
+            /* Progress bar (rectangular) */
+            QProgressBar {{
+                background-color: rgba(217, 217, 217, 0.3);
+                border: none;
+                border-radius: 0;
+                height: 4px;
+                text-align: center;
+            }}
+            QProgressBar::chunk {{
+                background-color: {t['progress_bg']};
+                border-radius: 0;
+            }}
+            
+            /* Add to timeline button (rectangular) */
             QPushButton#addToTimelineBtn {{
                 background-color: {t['accent']};
-                color: {t['button_text']};
+                color: #000000;
                 border: none;
-                border-radius: 4px;
+                border-radius: 0;
                 padding: 8px 16px;
                 font-size: 12px;
                 font-weight: 500;
@@ -464,11 +671,11 @@ class ClipABitApp(QWidget):
             QScrollBar:vertical {{
                 background-color: {t['background']};
                 width: 8px;
-                border-radius: 4px;
+                border-radius: 0;
             }}
             QScrollBar::handle:vertical {{
                 background-color: {t['border']};
-                border-radius: 4px;
+                border-radius: 0;
                 min-height: 30px;
             }}
             QScrollBar::handle:vertical:hover {{
@@ -484,13 +691,24 @@ class ClipABitApp(QWidget):
             }}
             QDialog QPushButton {{
                 background-color: {t['accent']};
-                color: {t['button_text']};
+                color: #000000;
                 border: none;
-                border-radius: 8px;
+                border-radius: 0;
                 padding: 10px 20px;
+                font-weight: 500;
             }}
             QDialog QPushButton:hover {{
                 background-color: {t['accent_hover']};
+            }}
+            
+            /* Get Started content container */
+            QWidget#getStartedContent {{
+                background-color: {t['background']};
+            }}
+            
+            /* Search content container */
+            QWidget#searchContent {{
+                background-color: {t['background']};
             }}
         """)
     
@@ -651,248 +869,6 @@ class ClipABitApp(QWidget):
         # Update the dialog's file status
         if hasattr(self, 'dialog_file_status'):
             self.dialog_file_status.setText(self._get_file_status_text())
-        
-    def _create_left_panel(self):
-        """Create the left panel with upload and job tracking."""
-        panel = QWidget()
-        layout = QVBoxLayout()
-        
-        # Upload section
-        upload_frame = QFrame()
-        upload_frame.setFrameStyle(QFrame.Shape.Box)
-        upload_layout = QVBoxLayout()
-        
-        upload_title = QLabel("<b>Upload Media</b>")
-        upload_layout.addWidget(upload_title)
-        
-        # Upload button
-        self.btn_select_files = QPushButton("Select Files to Upload")
-        self.btn_select_files.setMinimumHeight(35)
-        self.btn_select_files.clicked.connect(self._select_files_to_upload)
-        upload_layout.addWidget(self.btn_select_files)
-        
-        # Clear queue button
-        self.btn_clear_queue = QPushButton("Clear Queue")
-        self.btn_clear_queue.setMinimumHeight(30)
-        self.btn_clear_queue.clicked.connect(self._clear_upload_queue)
-        self.btn_clear_queue.setStyleSheet("background-color: #ff6b6b; color: white;")
-        upload_layout.addWidget(self.btn_clear_queue)
-        
-        # File status
-        self.file_status_label = QLabel("Checking media pool...")
-        upload_layout.addWidget(self.file_status_label)
-        
-        upload_frame.setLayout(upload_layout)
-        layout.addWidget(upload_frame)
-        
-        # Jobs section
-        jobs_frame = QFrame()
-        jobs_frame.setFrameStyle(QFrame.Shape.Box)
-        jobs_layout = QVBoxLayout()
-        
-        jobs_title = QLabel("<b>Active Jobs</b>")
-        jobs_layout.addWidget(jobs_title)
-        
-        # Jobs list
-        self.jobs_list = QListWidget()
-        self.jobs_list.setMaximumHeight(200)
-        jobs_layout.addWidget(self.jobs_list)
-        
-        jobs_frame.setLayout(jobs_layout)
-        layout.addWidget(jobs_frame)
-        
-        # Debug/Testing section
-        debug_frame = QFrame()
-        debug_frame.setFrameStyle(QFrame.Shape.Box)
-        debug_layout = QVBoxLayout()
-        
-        debug_title = QLabel("<b>Debug Info</b>")
-        debug_layout.addWidget(debug_title)
-        
-        # Storage path
-        storage_path = self._get_storage_path()
-        self.storage_path_label = QLabel(f"Storage: {storage_path}")
-        self.storage_path_label.setWordWrap(True)
-        self.storage_path_label.setStyleSheet("color: gray; font-size: 9px;")
-        debug_layout.addWidget(self.storage_path_label)
-        
-        # Processed files count
-        self.processed_count_label = QLabel("Processed: 0 files")
-        self.processed_count_label.setStyleSheet("color: gray; font-size: 9px;")
-        debug_layout.addWidget(self.processed_count_label)
-        
-        # View processed files button
-        btn_view_processed = QPushButton("View Processed Files")
-        btn_view_processed.setMinimumHeight(25)
-        btn_view_processed.clicked.connect(self._show_processed_files)
-        btn_view_processed.setStyleSheet("font-size: 9px;")
-        debug_layout.addWidget(btn_view_processed)
-
-        # Verify backend button
-        btn_verify_backend = QPushButton("Verify Backend")
-        btn_verify_backend.setMinimumHeight(25)
-        btn_verify_backend.clicked.connect(self._verify_backend_records)
-        btn_verify_backend.setStyleSheet("font-size: 9px; background-color: #6c8cff; color: white;")
-        debug_layout.addWidget(btn_verify_backend)
-        
-        # Clear processed files button
-        btn_clear_processed = QPushButton("Clear Processed Files")
-        btn_clear_processed.setMinimumHeight(25)
-        btn_clear_processed.clicked.connect(self._clear_processed_files)
-        btn_clear_processed.setStyleSheet("font-size: 9px; background-color: #ffaa00; color: white;")
-        debug_layout.addWidget(btn_clear_processed)
-        
-        debug_frame.setLayout(debug_layout)
-        layout.addWidget(debug_frame)
-        
-        layout.addStretch()
-        panel.setLayout(layout)
-        return panel
-        
-    def _create_right_panel(self):
-        """Create the right panel with search and results."""
-        panel = QWidget()
-        layout = QVBoxLayout()
-        
-        # Search section
-        search_frame = QFrame()
-        search_frame.setFrameStyle(QFrame.Shape.Box)
-        search_layout = QVBoxLayout()
-        
-        search_title = QLabel("<b>Search Videos</b>")
-        search_layout.addWidget(search_title)
-        
-        # Search input
-        search_input_layout = QHBoxLayout()
-        self.search_input = QLineEdit()
-        self.search_input.setPlaceholderText("Enter search query (e.g., 'woman walking', 'car driving')")
-        self.search_input.returnPressed.connect(self._perform_search)
-        search_input_layout.addWidget(self.search_input)
-        
-        self.btn_search = QPushButton("Search")
-        self.btn_search.clicked.connect(self._perform_search)
-        search_input_layout.addWidget(self.btn_search)
-        
-        search_layout.addLayout(search_input_layout)
-        search_frame.setLayout(search_layout)
-        layout.addWidget(search_frame)
-        
-        # Results section
-        results_frame = QFrame()
-        results_frame.setFrameStyle(QFrame.Shape.Box)
-        results_layout = QVBoxLayout()
-        
-        results_title = QLabel("<b>Search Results</b>")
-        results_layout.addWidget(results_title)
-        
-        # Results scroll area
-        self.results_scroll = QScrollArea()
-        self.results_scroll.setWidgetResizable(True)
-        self.results_widget = QWidget()
-        self.results_layout = QVBoxLayout()
-        self.results_widget.setLayout(self.results_layout)
-        self.results_scroll.setWidget(self.results_widget)
-        
-        results_layout.addWidget(self.results_scroll)
-        results_frame.setLayout(results_layout)
-        layout.addWidget(results_frame)
-        
-        panel.setLayout(layout)
-        return panel
-    def _get_storage_path(self) -> Path:
-        """Get path for local storage."""
-        try:
-            script_path = Path(__file__).resolve()
-        except Exception:
-            script_arg = sys.argv[0] if len(sys.argv) > 0 else ""
-            if script_arg:
-                script_path = Path(script_arg)
-                if not script_path.is_absolute():
-                    script_path = (Path.cwd() / script_path).resolve()
-            else:
-                script_path = Path.cwd()
-        return script_path.parent / "processed_files.json"
-        
-    def _load_processed_files(self) -> Dict[str, Dict]:
-        """Load list of processed files from local storage."""
-        storage_path = self._get_storage_path()
-        try:
-            if storage_path.exists():
-                with open(storage_path, 'r') as f:
-                    return json.load(f)
-        except Exception as e:
-            print(f"Error loading processed files: {e}")
-        return {}
-        
-    def _save_processed_files(self):
-        """Save processed files to local storage."""
-        storage_path = self._get_storage_path()
-        try:
-            storage_path.parent.mkdir(parents=True, exist_ok=True)
-            with open(storage_path, 'w') as f:
-                json.dump(self.processed_files, f, indent=2)
-        except Exception as e:
-            print(f"Error saving processed files: {e}")
-            
-    def _get_file_hash(self, filepath: str) -> str:
-        """Generate hash for file to track changes."""
-        try:
-            stat = os.stat(filepath)
-            # Use file path, size, and modification time for hash
-            content = f"{filepath}:{stat.st_size}:{stat.st_mtime}"
-            return hashlib.md5(content.encode()).hexdigest()
-        except Exception:
-            return hashlib.md5(filepath.encode()).hexdigest()
-
-    def _get_hashed_identifier(self, filepath: str, namespace: str, filename: str) -> str:
-        """Match backend identifier generation for plugin uploads."""
-        identifier_source = filepath if filepath else f"{namespace}/{filename}"
-        return hashlib.sha256(identifier_source.encode()).hexdigest()
-            
-    def _refresh_media_pool(self, debug: bool = False):
-        """Refresh media pool and update file status."""
-        if not resolve:
-            return
-            
-        self.clip_map = self._build_clip_map(debug=debug)
-        if debug:
-            print(f"[MediaPool] Refreshed clip map: {len(self.clip_map)} unique filenames")
-        self._update_file_status()
-        
-    def _clear_upload_queue(self):
-        """Clear the upload queue."""
-        if not self.upload_queue and not self.is_uploading:
-            QMessageBox.information(self, "Info", "No uploads to cancel.")
-            return
-            
-        # Ask for confirmation
-        reply = QMessageBox.question(
-            self, 
-            "Clear Upload Queue", 
-            f"Cancel {len(self.upload_queue)} queued uploads?\n\nCurrently uploading file will continue.",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
-        )
-        
-        if reply == QMessageBox.StandardButton.Yes:
-            cleared_count = len(self.upload_queue)
-            
-            # Remove queued jobs from display
-            jobs_to_remove = []
-            for job_id, job_info in self.current_jobs.items():
-                if job_info.get('status') == 'queued':
-                    jobs_to_remove.append(job_id)
-            
-            for job_id in jobs_to_remove:
-                del self.current_jobs[job_id]
-            
-            # Clear the queue
-            self.upload_queue.clear()
-            
-            # Update displays
-            self._update_jobs_display()
-            self.status_label.setText(f"Cleared {cleared_count} uploads from queue")
-            self._update_file_status()
-            
     def _update_file_status(self):
         """Update the file status display."""
         total_files = len(self.clip_map)
@@ -931,24 +907,21 @@ class ClipABitApp(QWidget):
             
         status_text = ", ".join(status_parts)
         
-        # Update file status label if it exists (old UI)
-        if hasattr(self, 'file_status_label') and self.file_status_label:
-            self.file_status_label.setText(status_text)
-        
         # Update status bar in new UI
         if hasattr(self, 'status_label') and self.status_label:
             self.status_label.setText(status_text)
-        
-        # Update processed files count in debug section
-        if hasattr(self, 'processed_count_label') and self.processed_count_label:
-            total_processed = len(self.processed_files)
-            self.processed_count_label.setText(f"Processed: {total_processed} files")
-        
-        # Update button states - disable during upload (if buttons exist)
-        if hasattr(self, 'btn_select_files') and self.btn_select_files:
-            self.btn_select_files.setEnabled(not self.is_uploading)
-        if hasattr(self, 'btn_clear_queue') and self.btn_clear_queue:
-            self.btn_clear_queue.setEnabled(queued_count > 0 or self.is_uploading)
+            
+        # Update dialog status label if open
+        try:
+            if hasattr(self, 'dialog_file_status') and self.dialog_file_status is not None:
+                # Check isVisible() might throw RuntimeError if underlying object is deleted
+                if self.dialog_file_status.isVisible():
+                    self.dialog_file_status.setText(status_text)
+        except RuntimeError:
+            # The widget gave up the ghost (was deleted C++ side)
+            self.dialog_file_status = None
+        except Exception as e:
+            print(f"[UI] Error updating file status: {e}")
         
     def _select_files_to_upload(self):
         """Select media pool clips and add them to the upload queue."""
@@ -1118,147 +1091,38 @@ class ClipABitApp(QWidget):
         return False
         
     def _check_if_file_exists_in_backend(self, filename: str, namespace: Optional[str] = None, hashed_identifier: Optional[str] = None) -> bool:
-        """Check if file exists in backend by hashed identifier."""
-        try:
-            # Build namespace from user_id and project_name (same as upload/search)
-            if namespace is None:
-                user_id = self.get_or_create_device_id()
-                project_name = self.get_project_name() or "default"
-                user_id_safe = user_id.lower().replace(" ", "_")
-                project_safe = project_name.lower().replace(" ", "_")
-                namespace = f"{user_id_safe}-{project_safe}"
-            
-            if not hashed_identifier:
-                return False
-
-            count = self._get_backend_vector_count(hashed_identifier, namespace, filename=filename)
-            if count is None:
-                return False
-            return count > 0
-        except Exception as e:
-            print(f"Error checking backend for file {filename}: {e}")
-            return False  # If we can't check, assume it doesn't exist
-
-    def _get_backend_vector_count(self, hashed_identifier: str, namespace: str, filename: Optional[str] = None) -> Optional[int]:
-        """Return vector count for a file by hashed identifier, or None on failure."""
-        if not hashed_identifier:
-            return 0
-
-        try:
-            params = {"hashed_identifier": hashed_identifier, "namespace": namespace}
-            response = requests.get(Config.CHECK_API_URL, params=params, timeout=20)
-            if response.status_code == 200:
-                result = response.json()
-                count = result.get("vector_count")
-                if count is None:
-                    return None
-                return int(count)
-
-            name = filename or hashed_identifier[:8]
-            print(f"Check endpoint failed for {name}: HTTP {response.status_code} {response.text}")
-            return None
-        except Exception as e:
-            name = filename or hashed_identifier[:8]
-            print(f"Error checking backend count for {name}: {e}")
-            return None
+        """Backend verification disabled: rely on local storage only."""
+        _ = (filename, namespace, hashed_identifier)
+        # print("[Verify] Backend verification disabled (local storage only).")
+        return False
 
     def _delete_backend_entry(self, filename: str, hashed_identifier: str, namespace: str):
         """Request backend deletion for a file's Pinecone data."""
-        try:
-            params = {
-                "hashed_identifier": hashed_identifier,
-                "filename": filename,
-                "namespace": namespace
-            }
-            response = requests.delete(Config.DELETE_API_URL, params=params, timeout=15)
-            if response.status_code != 200:
-                print(f"Delete failed for {filename}: HTTP {response.status_code} {response.text}")
-            else:
-                print(f"Requested backend deletion for {filename}")
-        except Exception as e:
-            print(f"Error requesting deletion for {filename}: {e}")
-
-    def _run_consistency_check(self, reason: str):
-        """Sync local tracking with backend and remove dangling entries."""
-        if not self.processed_files:
-            return {"checked": 0, "removed": 0, "updated": 0}
-
-        removed_count = 0
-        checked_count = 0
-        updated_count = 0
-        now = time.time()
-
-        for file_hash, info in list(self.processed_files.items()):
-            filename = info.get("filename", "")
-            filepath = info.get("filepath", "")
-            namespace = info.get("namespace")
-            expected_count = info.get("expected_vector_count")
-
-            if not namespace:
-                user_id = self.get_or_create_device_id()
-                project_name = self.get_project_name() or "default"
-                user_id_safe = user_id.lower().replace(" ", "_")
-                project_safe = project_name.lower().replace(" ", "_")
-                namespace = f"{user_id_safe}-{project_safe}"
-
-            hashed_identifier = info.get("hashed_identifier") or self._get_hashed_identifier(filepath, namespace, filename)
-
-            checked_count += 1
-
-            if filepath and not os.path.exists(filepath):
-                print(f"[Consistency] Missing local file: {filename}. Deleting from backend.")
-                self._delete_backend_entry(filename, hashed_identifier, namespace)
-                del self.processed_files[file_hash]
-                removed_count += 1
-                continue
-
-            if filename:
-                count = self._get_backend_vector_count(hashed_identifier, namespace, filename=filename)
-                if count is None:
-                    # Skip update if backend check failed
-                    continue
-
-                info['last_backend_check'] = now
-                info['vector_count'] = count
-                updated_count += 1
-
-                if count <= 0:
-                    print(f"[Consistency] Backend missing for: {filename}. Removing local record.")
-                    del self.processed_files[file_hash]
-                    removed_count += 1
-                elif expected_count is not None and count != expected_count:
-                    print(
-                        f"[Consistency] Vector count mismatch for {filename}: "
-                        f"expected {expected_count}, found {count}. Keeping local record."
-                    )
-
-        if removed_count > 0 or updated_count > 0:
-            self._save_processed_files()
-            self._update_file_status()
-
-        if checked_count > 0:
-            print(f"[Consistency] {reason}: checked {checked_count}, removed {removed_count}, updated {updated_count}")
-        return {"checked": checked_count, "removed": removed_count, "updated": updated_count}
-
-    def _verify_backend_records(self):
-        """Manually verify backend vector counts for processed files."""
-        if not self.processed_files:
-            QMessageBox.information(self, "Verify Backend", "No processed files to verify.")
+        if not self.auth_manager or not self.auth_manager.is_logged_in():
             return
-
-        self.status_label.setText("Verifying backend records (forced)...")
-        result = self._run_consistency_check("manual_verify")
-        self._update_file_status()
-
-        QMessageBox.information(
-            self,
-            "Verify Backend",
-            f"Verification complete.\nChecked: {result.get('checked', 0)}\nUpdated: {result.get('updated', 0)}\nRemoved: {result.get('removed', 0)}"
-        )
+        try:
+            def make_request(token):
+                headers = {"Authorization": f"Bearer {token}"} if token else {}
+                if token:
+                    print("[Auth] Adding Bearer token to delete request")
+                return requests.delete(
+                    Config.DELETE_API_URL,
+                    params={"namespace": namespace, "hashed_identifier": hashed_identifier},
+                    headers=headers,
+                    timeout=10,
+                )
+            response = self.auth_manager.execute_with_auth_retry("delete", make_request)
+            if response.status_code not in (200, 204):
+                print(f"[Delete] Backend delete failed for {filename}: {response.status_code} {response.text}")
+        except Exception as e:
+            print(f"[Delete] Backend delete error for {filename}: {e}")
             
     def _process_upload_queue(self):
         """Process the next file in the upload queue."""
         if not self.upload_queue or self.is_uploading:
+            return
+        if not self._token_getter():
+            QMessageBox.warning(self, "Sign In Required", "Please sign in to upload.")
             return
             
         # Get next file from queue
@@ -1275,219 +1139,132 @@ class ClipABitApp(QWidget):
         # Update UI
         remaining = len(self.upload_queue)
         filename = file_info['filename']
-        self.status_label.setText(f"Uploading: {filename} ({remaining} remaining in queue)")
+        self.status_label.setText(f"Starting upload: {filename} ({remaining} remaining)")
         
-        # Build namespace from user_id and project_name
+        # Build namespace
         user_id = self.get_or_create_device_id()
         project_name = self.get_project_name() or "default"
-        
-        # Simple namespace format: user_id-project_name (sanitized)
         user_id_safe = user_id.lower().replace(" ", "_")
         project_safe = project_name.lower().replace(" ", "_")
         namespace = f"{user_id_safe}-{project_safe}"
         
-        # Upload the file
-        self._upload_single_file(file_info, namespace)
-            
-    def _upload_single_file(self, file_info: Dict, namespace: str, retry_count: int = 0, max_retries: int = 3):
-        """Upload a single file to the backend with retry logic."""
-        filepath = file_info['filepath']
-        filename = file_info['filename']
-        file_hash = file_info['hash']
-        
+        # Start background uploader thread
+        self.current_uploader_thread = FileUploader(file_info, namespace, auth_manager=self.auth_manager)
+        self.current_uploader_thread.upload_started.connect(self._on_upload_started)
+        self.current_uploader_thread.upload_progress.connect(self._on_upload_progress)
+        self.current_uploader_thread.upload_success.connect(self._on_upload_success)
+        self.current_uploader_thread.upload_failed.connect(self._on_upload_error)
+        self.current_uploader_thread.finished.connect(self.current_uploader_thread.deleteLater)
+        self.current_uploader_thread.start()
+
+    def _on_upload_started(self, filename: str):
+        """Handle upload start."""
+        self.status_label.setText(f"Uploading: {filename}...")
+
+    def _on_upload_progress(self, filename: str, msg: str):
+        """Handle upload progress message."""
+        self.status_label.setText(msg)
+
+    def _on_upload_success(self, filename: str, file_hash: str, result: dict):
+        """Handle successful upload from background thread."""
         try:
-            if retry_count > 0:
-                print(f"[Upload] Retry attempt {retry_count}/{max_retries} for {filename}")
-            else:
-                print(f"[Upload] Starting upload for {filename}")
-            print(f"[Upload] File path: {filepath}")
-            print(f"[Upload] Namespace: {namespace}")
+            job_id = result.get("job_id")
+            print(f"[Upload] ✅ Upload successful, job_id: {job_id}")
             
-            # Get file size first
-            file_size = os.path.getsize(filepath)
-            file_size_mb = file_size / (1024 * 1024)
-            print(f"[Upload] File size: {file_size_mb:.2f} MB")
-                
-            # Upload to backend - use file object directly for streaming
-            # This is more memory efficient and may help with connection stability
-            with open(filepath, 'rb') as f:
-                files = {"file": (filename, f, "video/mp4")}
-                data = {"namespace": namespace, "original_filepath": filepath}
-                
-                self.status_label.setText(f"Uploading {filename}... (attempt {retry_count + 1})")
-                print(f"[Upload] Sending POST request to {Config.UPLOAD_API_URL}")
-                
-                # Use a session for better connection management
-                session = requests.Session()
-                # Increase timeout for larger files (calculate based on file size)
-                # Allow at least 1 minute per MB, minimum 60 seconds, max 10 minutes
-                upload_timeout = min(600, max(60, int(file_size_mb * 60)))
-                print(f"[Upload] Using timeout: {upload_timeout} seconds")
-                
-                response = session.post(
-                    Config.UPLOAD_API_URL, 
-                    files=files, 
-                    data=data, 
-                    timeout=upload_timeout,
-                    stream=False  # Don't stream response, we need the full response
-                )
-            
-            print(f"[Upload] Response status: {response.status_code}")
-            
-            if response.status_code == 200:
-                result = response.json()
-                job_id = result.get("job_id")
-                
-                if job_id:
-                    print(f"[Upload] ✅ Upload successful, job_id: {job_id}")
-                    temp_job_id = f"queued_{file_hash[:8]}"
-                    if temp_job_id in self.current_jobs:
-                        del self.current_jobs[temp_job_id]
-                    # Replace temp job with real job
-                    job_info = {
-                        'filename': filename,
-                        'filepath': filepath,
-                        'file_hash': file_hash,
-                        'status': 'processing',
-                        'namespace': namespace
-                    }
-                    
-                    self.current_jobs[job_id] = job_info
-                    self.job_tracker.add_job(job_id, job_info)
-                    self._update_jobs_display()
-                    
-                    self.status_label.setText(f"Upload started: {filename}")
-                else:
-                    error_msg = f"Upload failed for {filename}: No job ID returned. Response: {result}"
-                    print(f"[Upload] ❌ {error_msg}")
-                    QMessageBox.warning(self, "Error", error_msg)
-                    # Continue with next upload even if this one failed
-                    self._on_upload_completed(False)
-            else:
-                error_msg = f"Upload failed for {filename}: HTTP {response.status_code}\n{response.text}"
-                print(f"[Upload] ❌ {error_msg}")
-                QMessageBox.warning(self, "Error", error_msg)
-                temp_job_id = f"queued_{file_hash[:8]}"
-                if temp_job_id in self.current_jobs:
-                    del self.current_jobs[temp_job_id]
-                # Continue with next upload even if this one failed
-                self._on_upload_completed(False)
-                
-        except (requests.exceptions.ConnectionError, requests.exceptions.ProtocolError) as e:
-            # Retry connection errors with exponential backoff
-            if retry_count < max_retries:
-                wait_time = (2 ** retry_count) * 2  # 2, 4, 8 seconds
-                error_msg = f"Connection error uploading {filename} (attempt {retry_count + 1}/{max_retries + 1}): {str(e)}"
-                print(f"[Upload] ⚠️ {error_msg}")
-                print(f"[Upload] Retrying in {wait_time} seconds...")
-                self.status_label.setText(f"Connection error, retrying in {wait_time}s...")
-                
-                # Wait before retry
-                time.sleep(wait_time)
-                
-                # Retry the upload
-                self._upload_single_file(file_info, namespace, retry_count + 1, max_retries)
-            else:
-                error_msg = f"Connection error uploading {filename} after {max_retries + 1} attempts: {str(e)}"
-                print(f"[Upload] ❌ {error_msg}")
-                print(traceback.format_exc())
-                temp_job_id = f"queued_{file_hash[:8]}"
-                if temp_job_id in self.current_jobs:
-                    del self.current_jobs[temp_job_id]
-                QMessageBox.critical(self, "Network Error", f"{error_msg}\n\nPlease check your internet connection and try again.")
-                self._on_upload_completed(False)
-        except requests.exceptions.Timeout as e:
-            # Retry timeout errors too
-            if retry_count < max_retries:
-                wait_time = (2 ** retry_count) * 2
-                error_msg = f"Upload timeout for {filename} (attempt {retry_count + 1}/{max_retries + 1})"
-                print(f"[Upload] ⚠️ {error_msg}")
-                print(f"[Upload] Retrying in {wait_time} seconds...")
-                self.status_label.setText(f"Timeout, retrying in {wait_time}s...")
-                
-                time.sleep(wait_time)
-                
-                self._upload_single_file(file_info, namespace, retry_count + 1, max_retries)
-            else:
-                error_msg = f"Upload timeout for {filename} after {max_retries + 1} attempts: {str(e)}"
-                print(f"[Upload] ❌ {error_msg}")
-                print(traceback.format_exc())
-                temp_job_id = f"queued_{file_hash[:8]}"
-                if temp_job_id in self.current_jobs:
-                    del self.current_jobs[temp_job_id]
-                QMessageBox.critical(self, "Upload Timeout", f"{error_msg}\n\nFile may be too large or connection too slow.")
-                self._on_upload_completed(False)
-        except requests.exceptions.RequestException as e:
-            error_msg = f"Network error uploading {filename}: {str(e)}"
-            print(f"[Upload] ❌ {error_msg}")
-            print(traceback.format_exc())
+            # Cleanup temp job
             temp_job_id = f"queued_{file_hash[:8]}"
             if temp_job_id in self.current_jobs:
                 del self.current_jobs[temp_job_id]
-            QMessageBox.critical(self, "Network Error", error_msg)
-            self._on_upload_completed(False)
-        except FileNotFoundError as e:
-            error_msg = f"File not found: {filepath}\n{str(e)}"
-            print(f"[Upload] ❌ {error_msg}")
-            print(traceback.format_exc())
-            temp_job_id = f"queued_{file_hash[:8]}"
-            if temp_job_id in self.current_jobs:
-                del self.current_jobs[temp_job_id]
-            QMessageBox.critical(self, "File Error", error_msg)
-            self._on_upload_completed(False)
+                
+            # Create real job entry
+            filepath = self.current_upload['filepath'] if self.current_upload else ""
+            namespace = self.current_uploader_thread.namespace if hasattr(self, 'current_uploader_thread') else ""
+            
+            job_info = {
+                'filename': filename,
+                'filepath': filepath,
+                'file_hash': file_hash,
+                'status': 'processing',
+                'namespace': namespace
+            }
+            
+            self.current_jobs[job_id] = job_info
+            self.job_tracker.add_job(job_id, job_info)
+            self._update_jobs_display()
+            self._update_file_status()  # Update UI to reflect changes
+            
+            self.status_label.setText(f"Upload started: {filename}")
+            
+            # Continue with next upload
+            self._on_upload_completed(True)
         except Exception as e:
-            error_msg = f"Failed to upload {filename}: {str(e)}"
-            print(f"[Upload] ❌ {error_msg}")
-            print(traceback.format_exc())
-            temp_job_id = f"queued_{file_hash[:8]}"
-            if temp_job_id in self.current_jobs:
-                del self.current_jobs[temp_job_id]
-            QMessageBox.critical(self, "Error", error_msg)
+            err_msg = f"Critical error in upload success handler: {e}\n{traceback.format_exc()}"
+            print(err_msg)
+            QMessageBox.critical(self, "Plugin Error", f"An error occurred after upload:\n{e}")
             self._on_upload_completed(False)
+
+    def _on_upload_error(self, filename: str, file_hash: str, error_msg: str):
+        """Handle upload failure from background thread."""
+        print(f"[Upload] ❌ Error: {error_msg}")
+        
+        temp_job_id = f"queued_{file_hash[:8]}"
+        if temp_job_id in self.current_jobs:
+            del self.current_jobs[temp_job_id]
+            
+        QMessageBox.warning(self, "Upload Error", f"Failed to upload {filename}:\n{error_msg}")
+        
+        # Continue with next upload even if failed
+        self._on_upload_completed(False)
             
     def _on_job_completed(self, job_id: str, result: dict):
         """Handle job completion."""
-        if job_id in self.current_jobs:
-            job_info = self.current_jobs[job_id]
-            filename = job_info['filename']
-            filepath = job_info['filepath']
-            file_hash = job_info['file_hash']
-            namespace = job_info['namespace']
-            hashed_identifier = self._get_hashed_identifier(filepath, namespace, filename)
-            expected_vectors = None
-            try:
-                if isinstance(result, dict) and result.get("chunks") is not None:
-                    expected_vectors = int(result.get("chunks"))
-            except (TypeError, ValueError):
+        try:
+            if job_id in self.current_jobs:
+                job_info = self.current_jobs[job_id]
+                filename = job_info['filename']
+                filepath = job_info['filepath']
+                file_hash = job_info['file_hash']
+                namespace = job_info['namespace']
+                hashed_identifier = self._get_hashed_identifier(filepath, namespace, filename)
                 expected_vectors = None
-            
-            # Mark file as processed (keep existing tracking)
-            self.processed_files[file_hash] = {
-                'filename': filename,
-                'filepath': filepath,
-                'job_id': job_id,
-                'namespace': namespace,
-                'hashed_identifier': hashed_identifier,
-                'processed_at': time.time(),
-                'result': result,
-                'backend_miss_count': 0,
-                'last_backend_check': None,
-                'expected_vector_count': expected_vectors,
-                'vector_count': expected_vectors
-            }
-            self._save_processed_files()
-            
-            # Remove from current jobs
-            del self.current_jobs[job_id]
-            self._update_jobs_display()
-            self._update_file_status()
-            
-            self.status_label.setText(f"Completed: {filename}")
-            print(f"✅ Job {job_id} completed successfully for {filename}")
-            
-            # Continue with next upload in queue
-            self._on_upload_completed(True)
-            # Skip immediate consistency check; backend counts can lag right after upload
+                try:
+                    if isinstance(result, dict) and result.get("chunks") is not None:
+                        expected_vectors = int(result.get("chunks"))
+                except (TypeError, ValueError):
+                    expected_vectors = None
+                
+                # Mark file as processed (keep existing tracking)
+                self.processed_files[file_hash] = {
+                    'filename': filename,
+                    'filepath': filepath,
+                    'job_id': job_id,
+                    'namespace': namespace,
+                    'hashed_identifier': hashed_identifier,
+                    'processed_at': time.time(),
+                    'result': result,
+                    'backend_miss_count': 0,
+                    'last_backend_check': None,
+                    'expected_vector_count': expected_vectors,
+                    'vector_count': expected_vectors
+                }
+                self._save_processed_files()
+                
+                # Remove from current jobs
+                del self.current_jobs[job_id]
+                self._update_jobs_display()
+                self._update_file_status()
+                
+                self.status_label.setText(f"Completed: {filename}")
+                print(f"✅ Job {job_id} completed successfully for {filename}")
+                
+                # Continue with next upload in queue
+                self._on_upload_completed(True)
+                # Skip immediate consistency check; backend counts can lag right after upload
+        except Exception as e:
+            err_msg = f"Critical error in job completion: {e}\n{traceback.format_exc()}"
+            print(err_msg)
+            QMessageBox.critical(self, "Plugin Error", f"An error occurred while finishing the job:\n{e}")
+            self._on_upload_completed(False)
             
     def _on_job_failed(self, job_id: str, error: str):
         """Handle job failure."""
@@ -1555,32 +1332,17 @@ class ClipABitApp(QWidget):
             
     def _update_jobs_display(self):
         """Update the jobs list display."""
-        # Only update if jobs_list exists (old UI)
-        if not hasattr(self, 'jobs_list') or not self.jobs_list:
-            return
-            
-        self.jobs_list.clear()
+        # Update main job list (if exists in legacy UI, usually replaced by dialog)
+        if hasattr(self, 'jobs_list') and self.jobs_list:
+            self.jobs_list.clear()
+            for job_id, job_info in self.current_jobs.items():
+                filename = job_info['filename']
+                status = job_info.get('status', 'processing')
+                self.jobs_list.addItem(f"{filename} - {status}")
         
-        for job_id, job_info in self.current_jobs.items():
-            filename = job_info['filename']
-            status = job_info.get('status', 'processing')
-            
-            # Add status emoji for better visual feedback
-            if status == 'queued':
-                status_display = "⏳ queued"
-            elif status == 'processing':
-                status_display = "🔄 processing"
-            elif status == 'completed':
-                status_display = "✅ completed"
-            elif status == 'failed':
-                status_display = "❌ failed"
-            else:
-                status_display = status
-            
-            item_text = f"{filename} - {status_display}"
-            item = QListWidgetItem(item_text)
-            self.jobs_list.addItem(item)
-            
+        # Update dialog list if open
+        if hasattr(self, 'dialog_jobs_list') and self.dialog_jobs_list and self.dialog_jobs_list.isVisible():
+            self._update_jobs_list_widget(self.dialog_jobs_list)
     def _perform_search(self):
         """Perform semantic search."""
         query = self.search_input.text().strip()
@@ -1595,13 +1357,21 @@ class ClipABitApp(QWidget):
         project_safe = project_name.lower().replace(" ", "_")
         namespace = f"{user_id_safe}-{project_safe}"
         
+        if not self.auth_manager or not self.auth_manager.is_logged_in():
+            QMessageBox.warning(self, "Sign In Required", "Please sign in to search.")
+            return
+        
         self.status_label.setText(f"Searching for: {query}")
         self.btn_search.setEnabled(False)
         
         try:
-            # Perform search using same approach as Streamlit
             params = {"query": query, "namespace": namespace}
-            response = requests.get(Config.SEARCH_API_URL, params=params, timeout=30)
+            def make_request(token):
+                headers = {"Authorization": f"Bearer {token}"} if token else {}
+                if token:
+                    print("[Auth] Adding Bearer token to search request")
+                return requests.get(Config.SEARCH_API_URL, params=params, headers=headers, timeout=30)
+            response = self.auth_manager.execute_with_auth_retry("search", make_request)
             
             if response.status_code == 200:
                 result = response.json()
@@ -1672,12 +1442,12 @@ class ClipABitApp(QWidget):
                 self._clear_layout(item.layout())
         
     def _create_result_card(self, result: Dict, index: int) -> QWidget:
-        """Create a card widget for a single search result matching Figma design."""
+        """Create a card widget for a single search result matching Figma mockup design."""
         t = Theme.current
         
         card = QFrame()
         card.setObjectName("resultCard")
-        card.setFixedSize(280, 220)
+        card.setFixedSize(280, 240)
         
         layout = QVBoxLayout()
         layout.setSpacing(0)
@@ -1687,16 +1457,17 @@ class ClipABitApp(QWidget):
         filename = metadata.get('file_filename', 'Unknown')
         start_time = metadata.get('start_time_s', 0)
         end_time = metadata.get('end_time_s', 0)
+        score = result.get('score', 0)
         
-        # Thumbnail placeholder
+        # Thumbnail placeholder (gray card from mockup)
         thumbnail = QLabel()
         thumbnail.setObjectName("thumbnail")
-        thumbnail.setFixedHeight(150)
+        thumbnail.setFixedHeight(140)
         thumbnail.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        # Show filename and time range on thumbnail
-        thumbnail.setText(f"{filename[:20]}...\n{start_time:.1f}s - {end_time:.1f}s" if len(filename) > 20 else f"{filename}\n{start_time:.1f}s - {end_time:.1f}s")
-        thumbnail.setStyleSheet("""
-            background-color: #D9D9D9;
+        display_name = f"{filename[:20]}..." if len(filename) > 20 else filename
+        thumbnail.setText(f"{display_name}\n{start_time:.1f}s - {end_time:.1f}s")
+        thumbnail.setStyleSheet(f"""
+            background-color: {t['card_thumbnail']};
             color: #666666;
             font-size: 11px;
             border-top-left-radius: 8px;
@@ -1704,16 +1475,42 @@ class ClipABitApp(QWidget):
         """)
         layout.addWidget(thumbnail)
         
-        # Button container
+        # Progress bar (yellow bar from mockup showing relevance score)
+        progress = QProgressBar()
+        progress.setFixedHeight(6)
+        progress.setTextVisible(False)
+        progress.setMinimum(0)
+        progress.setMaximum(100)
+        progress.setValue(int(min(score * 100, 100)))
+        progress.setStyleSheet(f"""
+            QProgressBar {{
+                background-color: rgba(217, 217, 217, 0.5);
+                border: none;
+                border-radius: 0px;
+            }}
+            QProgressBar::chunk {{
+                background-color: {t['progress_bg']};
+            }}
+        """)
+        layout.addWidget(progress)
+        
+        # Info and button container
         btn_container = QWidget()
-        btn_container.setFixedHeight(50)
+        btn_container.setFixedHeight(70)
         btn_container.setStyleSheet(f"background-color: {t['card_bg']}; border-bottom-left-radius: 8px; border-bottom-right-radius: 8px;")
-        btn_layout = QHBoxLayout()
-        btn_layout.setContentsMargins(10, 5, 10, 10)
+        btn_layout = QVBoxLayout()
+        btn_layout.setContentsMargins(10, 8, 10, 10)
+        btn_layout.setSpacing(6)
+        
+        # Filename label
+        name_label = QLabel(display_name)
+        name_label.setStyleSheet(f"color: {t['text']}; font-size: 12px; font-weight: 500; background: transparent;")
+        btn_layout.addWidget(name_label)
         
         # Add to timeline button
         btn_add = QPushButton("Add to timeline")
         btn_add.setObjectName("addToTimelineBtn")
+        btn_add.setFixedHeight(28)
         btn_add.setCursor(Qt.CursorShape.PointingHandCursor)
         btn_add.clicked.connect(lambda checked, r=result: self._add_result_to_timeline(r))
         btn_layout.addWidget(btn_add)
@@ -1728,7 +1525,6 @@ class ClipABitApp(QWidget):
     def _create_result_widget(self, result: Dict, index: int) -> QWidget:
         """Create a widget for a single search result (legacy)."""
         return self._create_result_card(result, index)
-        
     def _add_result_to_timeline(self, result: Dict):
         """Add a search result to the timeline."""
         if not resolve:
@@ -1965,16 +1761,7 @@ class ClipABitApp(QWidget):
                 
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Failed to add clip: {str(e)}")
-            
-    def closeEvent(self, event):
-        """Handle window close event."""
-        if hasattr(self, 'job_tracker'):
-            self.job_tracker.stop()
-            self.job_tracker.wait()
-        if hasattr(self, 'refresh_timer'):
-            self.refresh_timer.stop()
-        event.accept()
-
+    
     def _ensure_timeline(self):
         """Ensure a timeline exists, create one if needed."""
         if not resolve:
@@ -2000,7 +1787,6 @@ class ClipABitApp(QWidget):
 
         print("Created new empty timeline.")
         return True
-
     def _extract_clip_fps(self, clip):
         """Try to read a clip's frame rate from common clip properties.
 
@@ -2104,6 +1890,50 @@ class ClipABitApp(QWidget):
                 mapping[filename] = entry
 
         return mapping
+        
+    def _refresh_media_pool(self, debug: bool = False):
+        """Refresh media pool and update file status."""
+        if not resolve:
+            return
+            
+        self.clip_map = self._build_clip_map(debug=debug)
+        if debug:
+            print(f"[MediaPool] Refreshed clip map: {len(self.clip_map)} unique filenames")
+        self._update_file_status()
+        
+    def _clear_upload_queue(self):
+        """Clear the upload queue."""
+        if not self.upload_queue and not self.is_uploading:
+            QMessageBox.information(self, "Info", "No uploads to cancel.")
+            return
+            
+        # Ask for confirmation
+        reply = QMessageBox.question(
+            self, 
+            "Clear Upload Queue", 
+            f"Cancel {len(self.upload_queue)} queued uploads?\n\nCurrently uploading file will continue.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+        )
+        
+        if reply == QMessageBox.StandardButton.Yes:
+            cleared_count = len(self.upload_queue)
+            
+            # Remove queued jobs from display
+            jobs_to_remove = []
+            for job_id, job_info in self.current_jobs.items():
+                if job_info.get('status') == 'queued':
+                    jobs_to_remove.append(job_id)
+            
+            for job_id in jobs_to_remove:
+                del self.current_jobs[job_id]
+            
+            # Clear the queue
+            self.upload_queue.clear()
+            
+            # Update displays
+            self._update_jobs_display()
+            self.status_label.setText(f"Cleared {cleared_count} uploads from queue")
+            self._update_file_status()
 
     def _get_device_id_path(self) -> Path:
         """Return a platform-appropriate path to persist the device id."""
@@ -2325,9 +2155,91 @@ class ClipABitApp(QWidget):
                 "Pinecone data deleted. Local tracking kept for verification."
             )
             print("Pinecone data deleted; local tracking kept")
+            
+    def _verify_backend_records(self):
+        """Manually verify backend vector counts for processed files."""
+        QMessageBox.information(
+            self,
+            "Verify Backend",
+            "Backend verification is disabled. Using local storage only."
+        )
 
-# --- Main Execution ---
-if __name__ == "__main__":
+    def _run_consistency_check(self, reason: str):
+        """Sync local tracking with backend and remove dangling entries."""
+        if not self.processed_files:
+            return {"checked": 0, "removed": 0, "updated": 0}
+
+        removed_count = 0
+        checked_count = 0
+        updated_count = 0
+        now = time.time()
+
+        for file_hash, info in list(self.processed_files.items()):
+            filename = info.get("filename", "")
+            filepath = info.get("filepath", "")
+            namespace = info.get("namespace")
+
+            if not namespace:
+                user_id = self.get_or_create_device_id()
+                project_name = self.get_project_name() or "default"
+                user_id_safe = user_id.lower().replace(" ", "_")
+                project_safe = project_name.lower().replace(" ", "_")
+                namespace = f"{user_id_safe}-{project_safe}"
+
+
+            checked_count += 1
+
+            if filepath and not os.path.exists(filepath):
+                print(f"[Consistency] Missing local file: {filename}. Removing local record.")
+                del self.processed_files[file_hash]
+                removed_count += 1
+                continue
+
+            if filename:
+                info['last_backend_check'] = now
+                updated_count += 1
+
+        if removed_count > 0 or updated_count > 0:
+            self._save_processed_files()
+            self._update_file_status()
+
+        if checked_count > 0:
+            print(f"[Consistency] {reason}: checked {checked_count}, removed {removed_count}, updated {updated_count}")
+        return {"checked": checked_count, "removed": removed_count, "updated": updated_count}
+
+    def closeEvent(self, event):
+        """Handle window close event."""
+        if hasattr(self, 'job_tracker'):
+            self.job_tracker.stop()
+            self.job_tracker.wait()
+        if hasattr(self, 'refresh_timer'):
+            self.refresh_timer.stop()
+        event.accept()
+
+def main(resolve_api=None):
+    """Main entry point.
+    
+    Args:
+        resolve_api: Optional Resolve object injected from the shim.
+    """
+    global resolve, project, media_pool, project_manager
+    
+    # If API object is injected, use it to setup globals
+    if resolve_api:
+        resolve = resolve_api
+        try:
+            project_manager = resolve.GetProjectManager()
+            project = project_manager.GetCurrentProject()
+            media_pool = project.GetMediaPool()
+            print("[Plugin] Resolve API injected successfully.")
+        except Exception as e:
+            print(f"[Plugin] Failed to initialize Resolve objects from injected API: {e}")
+            resolve = None
+    
+    # Check if we have a valid Resolve connection
+    if not resolve:
+        print("[Plugin] Warning: Running without Resolve API (Simulation Mode)")
+
     app_qt = QApplication.instance()
     if not app_qt:
         app_qt = QApplication(sys.argv)
@@ -2338,5 +2250,4 @@ if __name__ == "__main__":
     window.activateWindow()
     
     print("ClipABit Plugin started.") 
-    # Use exec() for PyQt6 (exec_ is deprecated)
     app_qt.exec()
