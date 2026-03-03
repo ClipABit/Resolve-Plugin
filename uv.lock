@@ -285,7 +285,7 @@ wheels = [
 
 [[package]]
 name = "clipabit-plugin"
-version = "1.0.0.dev4"
+version = "1.1.0"
 source = { virtual = "." }
 dependencies = [
     { name = "auth0-python" },
@@ -303,8 +303,8 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "auth0-python" },
-    { name = "keyring" },
+    { name = "auth0-python", specifier = ">=4.7.0" },
+    { name = "keyring", specifier = ">=24.0.0" },
     { name = "pyqt6", specifier = ">=6.10.0" },
     { name = "requests", specifier = ">=2.31.0" },
     { name = "watchdog", specifier = ">=3.0.0" },
