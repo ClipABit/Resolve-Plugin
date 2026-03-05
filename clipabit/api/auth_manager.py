@@ -46,6 +46,12 @@ class AuthManager:
 
         self.on_reauth_required: Optional[Callable[[], None]] = None
         self._token_lock = Lock()
+        self._debug_auth = os.environ.get("CLIPABIT_AUTH_DEBUG", "").lower() in {
+            "1",
+            "true",
+            "yes",
+            "on",
+        }
 
         print(f"[Auth] Config loaded: domain={self.AUTH0_DOMAIN}")
         print(f"[Auth] Config loaded: client_id present: {bool(self.CLIENT_ID)}")
@@ -82,10 +88,10 @@ class AuthManager:
                     state = params.get("state", [""])[0] or None
                     error = params.get("error", [""])[0] or None
 
-                    result["code"] = code
-                    result["state_valid"] = (
-                        state == expected_state if state else False
-                    )
+                    state_valid = state == expected_state if state else False
+                    result["state_valid"] = state_valid
+                    if state_valid:
+                        result["code"] = code
 
                     code_preview = f"{code[:8]}..." if code else "None"
                     state_preview = f"{state[:8]}..." if state else "None"
@@ -105,7 +111,8 @@ class AuthManager:
                         template = (_RESOURCES_DIR / "callback_success.html").read_text(encoding="utf-8")
                     html = template.replace("LOGO_SVG_PLACEHOLDER", logo_svg).encode()
                     self.wfile.write(html)
-                    event.set()
+                    if result["state_valid"]:
+                        event.set()
                 else:
                     self.send_response(404)
                     self.end_headers()
@@ -171,7 +178,9 @@ class AuthManager:
         )
 
         print("[Auth] Opening browser to Auth0...")
-        print(f"[Auth] Authorization URL: {authorization_url[:80]}...")
+        print("[Auth] Authorization URL prepared")
+        if self._debug_auth:
+            print(f"[Auth] Authorization URL: {authorization_url}")
 
         webbrowser.open(authorization_url)
 
@@ -205,7 +214,9 @@ class AuthManager:
         print(f"[Auth] Token exchange response status: {response.status_code}")
 
         if not response.ok:
-            print(f"[Auth] Token exchange failed: {response.text}")
+            print(f"[Auth] Token exchange failed: HTTP {response.status_code}")
+            if self._debug_auth:
+                print(f"[Auth] Token exchange response body: {response.text}")
             return None
 
         data = response.json()
@@ -310,7 +321,9 @@ class AuthManager:
         )
 
         if not response.ok:
-            print(f"[Auth] Refresh failed: {response.text}")
+            print(f"[Auth] Refresh failed: HTTP {response.status_code}")
+            if self._debug_auth:
+                print(f"[Auth] Refresh response body: {response.text}")
             return None
 
         data = response.json()

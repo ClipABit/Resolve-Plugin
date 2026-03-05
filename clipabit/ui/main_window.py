@@ -1464,6 +1464,8 @@ class ClipABitApp(QWidget):
         thumbnail.setObjectName("thumbnail")
         thumbnail.setFixedHeight(140)
         thumbnail.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        # Avoid rich-text rendering for backend-provided metadata
+        thumbnail.setTextFormat(Qt.TextFormat.PlainText)
         display_name = f"{filename[:20]}..." if len(filename) > 20 else filename
         thumbnail.setText(f"{display_name}\n{start_time:.1f}s - {end_time:.1f}s")
         thumbnail.setStyleSheet(f"""
@@ -1504,6 +1506,8 @@ class ClipABitApp(QWidget):
         
         # Filename label
         name_label = QLabel(display_name)
+        # Avoid rich-text rendering for backend-provided metadata
+        name_label.setTextFormat(Qt.TextFormat.PlainText)
         name_label.setStyleSheet(f"color: {t['text']}; font-size: 12px; font-weight: 500; background: transparent;")
         btn_layout.addWidget(name_label)
         
