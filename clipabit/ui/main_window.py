@@ -110,6 +110,8 @@ class ClipABitApp(QWidget):
         self.clip_map = {}
         self.processed_files = self._load_processed_files()
         self.current_jobs = {}  # job_id -> job_info
+        self.dialog_jobs_list = None
+        self.dialog_file_status = None
         
         # Upload queue system
         self.upload_queue = []  # List of files waiting to be uploaded
@@ -192,10 +194,10 @@ class ClipABitApp(QWidget):
         self.search_content = self._create_search_content()
         main_layout.addWidget(self.search_content, 1)
         
-        # Status bar (minimal)
+        # Internal status label (kept for message plumbing, not shown in UI)
         self.status_label = QLabel("Ready")
         self.status_label.setObjectName("statusBar")
-        main_layout.addWidget(self.status_label)
+        self.status_label.setVisible(False)
         
         self.setLayout(main_layout)
         
@@ -291,7 +293,7 @@ class ClipABitApp(QWidget):
         self.btn_auth.setVisible(is_logged_in)
     
     def _create_header(self):
-        """Create the header bar with logo, Active Jobs/Debug button, settings, and close button."""
+        """Create the header bar with logo and actions."""
         header = QWidget()
         header.setFixedHeight(80)
         header.setObjectName("header")
@@ -323,28 +325,16 @@ class ClipABitApp(QWidget):
         # Media Pool button
         self.btn_media_pool = QPushButton("Media Pool")
         self.btn_media_pool.setObjectName("headerButtonSecondary")
-        self.btn_media_pool.clicked.connect(self._show_settings_dialog)
+        self.btn_media_pool.clicked.connect(self._show_upload_dialog)
         layout.addWidget(self.btn_media_pool)
         
-        # Debug button
-        self.btn_jobs_debug = QPushButton("Debug")
-        self.btn_jobs_debug.setObjectName("headerButtonSecondary")
+        # Small info icon button (top-right action)
+        self.btn_jobs_debug = QPushButton("i")
+        self.btn_jobs_debug.setObjectName("infoIconButton")
+        self.btn_jobs_debug.setFixedSize(24, 24)
+        self.btn_jobs_debug.setToolTip("Info")
         self.btn_jobs_debug.clicked.connect(self._show_jobs_dialog)
         layout.addWidget(self.btn_jobs_debug)
-        
-        # Settings button (gear icon) - use image placeholder
-        self.btn_settings = QPushButton()
-        self.btn_settings.setObjectName("settingsButton")
-        self.btn_settings.setFixedSize(46, 45)
-        self.btn_settings.clicked.connect(self._show_settings_dialog)
-        layout.addWidget(self.btn_settings)
-        
-        # Close button (X) on the right
-        self.btn_close = QPushButton("✕")
-        self.btn_close.setObjectName("closeButton")
-        self.btn_close.setFixedSize(40, 40)
-        self.btn_close.clicked.connect(self.close)
-        layout.addWidget(self.btn_close)
         
         header.setLayout(layout)
         return header
@@ -523,7 +513,7 @@ class ClipABitApp(QWidget):
                 background-color: {t['accent_hover']};
             }}
             
-            /* Header button secondary (Debug, Media Pool, rectangular) */
+            /* Header button secondary (Media Pool) */
             QPushButton#headerButtonSecondary {{
                 background-color: #9CA3AF;
                 color: #FFFFFF;
@@ -535,6 +525,22 @@ class ClipABitApp(QWidget):
             }}
             QPushButton#headerButtonSecondary:hover {{
                 background-color: #7B8794;
+            }}
+
+            /* Compact info icon button */
+            QPushButton#infoIconButton {{
+                background-color: transparent;
+                color: {t['text_secondary']};
+                border: 1px solid {t['text_secondary']};
+                border-radius: 12px;
+                font-size: 12px;
+                font-weight: 700;
+                padding: 0;
+            }}
+            QPushButton#infoIconButton:hover {{
+                color: {t['text']};
+                border-color: {t['text']};
+                background-color: rgba(255, 255, 255, 0.08);
             }}
             
             /* Settings button */
@@ -713,9 +719,9 @@ class ClipABitApp(QWidget):
         """)
     
     def _show_jobs_dialog(self):
-        """Show the Active Jobs/Debug dialog."""
+        """Show the active jobs/info dialog."""
         dialog = QDialog(self)
-        dialog.setWindowTitle("Active Jobs / Debug")
+        dialog.setWindowTitle("Info")
         dialog.setMinimumSize(500, 400)
         
         layout = QVBoxLayout()
@@ -733,10 +739,10 @@ class ClipABitApp(QWidget):
         self._update_jobs_list_widget(self.dialog_jobs_list)
         layout.addWidget(self.dialog_jobs_list)
         
-        # Debug section
-        debug_title = QLabel("Debug Info")
-        debug_title.setStyleSheet("font-size: 18px; font-weight: bold;")
-        layout.addWidget(debug_title)
+        # Info section
+        info_title = QLabel("Info")
+        info_title.setStyleSheet("font-size: 18px; font-weight: bold;")
+        layout.addWidget(info_title)
         
         # Storage path
         storage_path = self._get_storage_path()
@@ -761,13 +767,16 @@ class ClipABitApp(QWidget):
         layout.addWidget(close_btn)
         
         dialog.setLayout(layout)
-        dialog.exec()
+        try:
+            dialog.exec()
+        finally:
+            self.dialog_jobs_list = None
     
-    def _show_settings_dialog(self):
-        """Show the Settings dialog with upload controls."""
+    def _show_upload_dialog(self):
+        """Show the upload dialog with media pool actions."""
         dialog = QDialog(self)
-        dialog.setWindowTitle("Settings")
-        dialog.setMinimumSize(450, 500)
+        dialog.setWindowTitle("Media Pool")
+        dialog.setMinimumSize(450, 320)
         
         layout = QVBoxLayout()
         layout.setSpacing(15)
@@ -784,45 +793,11 @@ class ClipABitApp(QWidget):
         self.dialog_file_status.setStyleSheet("color: #8E8E93;")
         layout.addWidget(self.dialog_file_status)
         
-        # Select Files button (white)
+        # Select files button
         btn_select = QPushButton("Select Files to Upload")
         btn_select.setStyleSheet("background-color: #FFFFFF; color: #000000;")
         btn_select.clicked.connect(lambda: self._select_files_to_upload_dialog(dialog))
         layout.addWidget(btn_select)
-        
-        # Divider
-        divider = QFrame()
-        divider.setFrameShape(QFrame.Shape.HLine)
-        divider.setStyleSheet("background-color: #4A4B52;")
-        layout.addWidget(divider)
-        
-        # Data Management section
-        data_title = QLabel("Data Management")
-        data_title.setStyleSheet("font-size: 18px; font-weight: bold;")
-        layout.addWidget(data_title)
-        
-        # Clear processed files button (white)
-        btn_clear = QPushButton("Clear Processed Files")
-        btn_clear.setStyleSheet("background-color: #FFFFFF; color: #000000;")
-        btn_clear.clicked.connect(self._clear_processed_files)
-        layout.addWidget(btn_clear)
-        
-        # Divider
-        divider2 = QFrame()
-        divider2.setFrameShape(QFrame.Shape.HLine)
-        divider2.setStyleSheet("background-color: #4A4B52;")
-        layout.addWidget(divider2)
-        
-        # Appearance section (last)
-        theme_title = QLabel("Appearance")
-        theme_title.setStyleSheet("font-size: 18px; font-weight: bold;")
-        layout.addWidget(theme_title)
-        
-        # Theme toggle (white)
-        theme_btn = QPushButton("Toggle Dark/Light Mode")
-        theme_btn.setStyleSheet("background-color: #FFFFFF; color: #000000;")
-        theme_btn.clicked.connect(self._toggle_theme)
-        layout.addWidget(theme_btn)
         
         # Spacer
         layout.addStretch()
@@ -833,15 +808,10 @@ class ClipABitApp(QWidget):
         layout.addWidget(close_btn)
         
         dialog.setLayout(layout)
-        dialog.exec()
-    
-    def _toggle_theme(self):
-        """Toggle between dark and light themes."""
-        if Theme.current == Theme.DARK:
-            Theme.current = Theme.LIGHT
-        else:
-            Theme.current = Theme.DARK
-        self._apply_theme()
+        try:
+            dialog.exec()
+        finally:
+            self.dialog_file_status = None
     
     def _get_file_status_text(self):
         """Get the file status text for display."""
@@ -1341,8 +1311,12 @@ class ClipABitApp(QWidget):
                 self.jobs_list.addItem(f"{filename} - {status}")
         
         # Update dialog list if open
-        if hasattr(self, 'dialog_jobs_list') and self.dialog_jobs_list and self.dialog_jobs_list.isVisible():
-            self._update_jobs_list_widget(self.dialog_jobs_list)
+        try:
+            if self.dialog_jobs_list is not None and self.dialog_jobs_list.isVisible():
+                self._update_jobs_list_widget(self.dialog_jobs_list)
+        except RuntimeError:
+            # Dialog closed and underlying C++ widget has been destroyed.
+            self.dialog_jobs_list = None
     def _perform_search(self):
         """Perform semantic search."""
         query = self.search_input.text().strip()
