@@ -76,7 +76,13 @@ class AuthManager:
         wait_for_callback(timeout_seconds) blocks until callback received or timeout,
         then returns (code, state_valid).
         """
-        result: dict = {"code": None, "state_valid": False}
+        result: dict = {
+            "code": None,
+            "state_valid": False,
+            "error": None,
+            "error_description": None,
+            "error_uri": None,
+        }
         event = Event()
 
         class CallbackHandler(BaseHTTPRequestHandler):
@@ -87,11 +93,20 @@ class AuthManager:
                     code = params.get("code", [""])[0] or None
                     state = params.get("state", [""])[0] or None
                     error = params.get("error", [""])[0] or None
+                    error_description = params.get("error_description", [""])[0] or None
+                    error_uri = params.get("error_uri", [""])[0] or None
 
                     state_valid = state == expected_state if state else False
+                    has_terminal_auth_response = bool(code or error)
                     result["state_valid"] = state_valid
-                    if state_valid:
+
+                    # Only persist terminal callback data (code or error).
+                    # Ignore partial callbacks that only carry state.
+                    if state_valid and has_terminal_auth_response:
                         result["code"] = code
+                        result["error"] = error
+                        result["error_description"] = error_description
+                        result["error_uri"] = error_uri
 
                     code_preview = f"{code[:8]}..." if code else "None"
                     state_preview = f"{state[:8]}..." if state else "None"
@@ -99,20 +114,28 @@ class AuthManager:
                     print(
                         f"[Auth] State validation: {'PASS' if result['state_valid'] else 'FAIL'}"
                     )
+                    if error:
+                        print(f"[Auth] Authorization error: {error}")
+                    if error_description:
+                        print(f"[Auth] Authorization error description: {error_description}")
+                    if error_uri:
+                        print(f"[Auth] Authorization error uri: {error_uri}")
 
                     self.send_response(200)
                     self.send_header("Content-type", "text/html")
                     self.end_headers()
                     logo_svg = (_RESOURCES_DIR / "logo.svg").read_text(encoding="utf-8")
-                    # Treat state mismatch as an error (CSRF protection: invalid state = possible token theft)
-                    if error or not result["state_valid"]:
+                    # Treat state mismatch and missing code as callback errors.
+                    if error or not result["state_valid"] or not code:
                         template = (_RESOURCES_DIR / "callback_error.html").read_text(encoding="utf-8")
                     else:
                         template = (_RESOURCES_DIR / "callback_success.html").read_text(encoding="utf-8")
                     html = template.replace("LOGO_SVG_PLACEHOLDER", logo_svg).encode()
                     self.wfile.write(html)
-                    if result["state_valid"]:
+                    if state_valid and has_terminal_auth_response:
                         event.set()
+                    elif state_valid:
+                        print("[Auth] Callback missing code/error; waiting for terminal callback")
                 else:
                     self.send_response(404)
                     self.end_headers()
@@ -138,10 +161,18 @@ class AuthManager:
 
         def wait_for_callback(timeout: int = 300) -> Tuple[Optional[str], bool]:
             print(f"[Auth] Waiting for callback (timeout: {timeout}s)...")
-            event.wait(timeout)
-            if result["code"] is None:
+            received = event.wait(timeout)
+            if not received:
                 print("[Auth] Timeout reached - no callback received")
                 print("[Auth] Login cancelled by user")
+            elif result["code"] is None:
+                print("[Auth] Callback completed without authorization code")
+                if result.get("error"):
+                    print(f"[Auth] Authorization error: {result['error']}")
+                if result.get("error_description"):
+                    print(f"[Auth] Authorization error description: {result['error_description']}")
+                if result.get("error_uri"):
+                    print(f"[Auth] Authorization error uri: {result['error_uri']}")
             print("[Auth] Callback server shutting down")
             server.shutdown()
             server.server_close()
