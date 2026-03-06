@@ -458,7 +458,7 @@ class ClipABitApp(QWidget):
             QWidget {{
                 background-color: {t['background']};
                 color: {t['text']};
-                font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+                font-family: 'Helvetica Neue', 'Segoe UI', Roboto, sans-serif;
             }}
             
             /* Header */
