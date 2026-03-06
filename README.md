@@ -37,7 +37,6 @@ export CLIPABIT_AUTH0_AUDIENCE="https://api.clipabit.com"
 
 # Optional runtime mode flags
 export CLIPABIT_ENVIRONMENT="dev"      # dev (default), staging, prod
-export CLIPABIT_DEV_COMBINED="true"    # true (default) or false
 ```
 
 On Windows PowerShell:
@@ -47,7 +46,6 @@ $env:CLIPABIT_AUTH0_DOMAIN = "your-tenant.auth0.com"
 $env:CLIPABIT_AUTH0_CLIENT_ID = "your_client_id"
 $env:CLIPABIT_AUTH0_AUDIENCE = "https://api.clipabit.com"
 $env:CLIPABIT_ENVIRONMENT = "dev"
-$env:CLIPABIT_DEV_COMBINED = "true"
 ```
 
 You can also use a `.env` file. The plugin auto-loads `.env` values at startup (without overwriting already-exported variables). It looks in:
@@ -170,7 +168,6 @@ This watches the plugin source and syncs both:
 | `CLIPABIT_AUTH0_CLIENT_ID` | Yes (for sign-in) | none | Auth0 application client ID |
 | `CLIPABIT_AUTH0_AUDIENCE` | Yes (for sign-in) | none | API audience used in token requests |
 | `CLIPABIT_ENVIRONMENT` | No | `dev` | `dev`, `staging`, `prod` |
-| `CLIPABIT_DEV_COMBINED` | No | `true` | Used only when `CLIPABIT_ENVIRONMENT=dev` to select combined vs split dev service URLs |
 
 ### File Locations
 
