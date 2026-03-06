@@ -1,3 +1,5 @@
+## [1.1.1-staging.1](https://github.com/ClipABit/Resolve-Plugin/compare/v1.1.0...v1.1.1-staging.1) (2026-03-06)
+
 ## [1.1.0](https://github.com/ClipABit/Resolve-Plugin/compare/v1.0.0...v1.1.0) (2026-01-30)
 
 ## 1.0.0 (2026-01-30)
