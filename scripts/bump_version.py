@@ -6,13 +6,17 @@ from pathlib import Path
 
 
 def semver_to_pep440(version: str) -> str:
-    """Convert a semver pre-release version to PEP 440 format.
+    """Convert a semver pre-release version to PEP 440 format for pyproject.toml.
 
-    Examples:
-        1.1.1-staging.1 -> 1.1.1rc1
-        1.1.1-alpha.3   -> 1.1.1a3
-        1.1.1-beta.2    -> 1.1.1b2
-        1.1.1            -> 1.1.1  (no change)
+    Git tags and GitHub releases stay in semver (e.g. v1.1.1-staging.3).
+    This conversion only affects the version written to pyproject.toml,
+    since Python tooling (uv, pip) requires PEP 440 compliance.
+
+    Mapping:
+        alpha  -> a   (e.g. 1.1.1-alpha.3  -> 1.1.1a3)
+        beta   -> b   (e.g. 1.1.1-beta.2   -> 1.1.1b2)
+        *      -> rc  (e.g. 1.1.1-staging.1 -> 1.1.1rc1)
+        (none) ->     (e.g. 1.1.1           -> 1.1.1, no change)
     """
     m = re.match(r"^(\d+\.\d+\.\d+)-(.+)\.(\d+)$", version)
     if not m:

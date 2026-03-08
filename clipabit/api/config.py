@@ -8,12 +8,12 @@ class Config:
 
     # Modal ASGI app base URLs
     # URL format: https://clipabit01--{app-name}-{classname-lowercase}-asgi-app.modal.run
-    if ENVIRONMENT == "dev": 
+    if ENVIRONMENT == "dev":
         # Dev combined mode: both services in dev-server app
-        # DevServer class -> devserver-asgi-app
-        # DevSearchService wraps SearchService -> searchservice-asgi-app
-        SERVER_BASE_URL = "https://clipabit01--dev-server-devserver-asgi-app-dev.modal.run"
-        SEARCH_BASE_URL = "https://clipabit01--dev-server-searchservice-asgi-app-dev.modal.run"
+        # App name is {DEV_NAME}-dev-server (matches monorepo dev_combined.py)
+        DEV_NAME = os.environ.get("CLIPABIT_DEV_NAME", "dev")
+        SERVER_BASE_URL = f"https://clipabit01--{DEV_NAME}-dev-server-devserver-asgi-app-dev.modal.run"
+        SEARCH_BASE_URL = f"https://clipabit01--{DEV_NAME}-dev-server-searchservice-asgi-app-dev.modal.run"
     else:
         # Staging/Production: separate apps
         # staging-server app: Server class -> server-asgi-app

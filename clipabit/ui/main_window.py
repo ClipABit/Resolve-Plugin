@@ -211,14 +211,25 @@ class ClipABitApp(QWidget):
         layout = QVBoxLayout()
         layout.setSpacing(0)
         layout.setContentsMargins(0, 0, 0, 0)
-        
+
         # Center container
         center_container = QWidget()
         center_layout = QVBoxLayout()
         center_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        center_layout.setSpacing(30)
-        
-        # Tagline text (centered, no logo)
+        center_layout.setSpacing(12)
+
+        # Large logo for landing page
+        logo_path = Path(__file__).parent.parent.parent / "assets" / "logo-dark.svg"
+        if logo_path.exists():
+            self.landing_logo = QSvgWidget(str(logo_path))
+            self.landing_logo.setFixedSize(260, 120)
+        else:
+            self.landing_logo = QLabel("ClipABit")
+            self.landing_logo.setStyleSheet("font-size: 32px; font-weight: bold;")
+            self.landing_logo.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        center_layout.addWidget(self.landing_logo, alignment=Qt.AlignmentFlag.AlignCenter)
+
+        # Tagline text
         tagline = QLabel("Search by ideas, not timestamps.")
         tagline.setAlignment(Qt.AlignmentFlag.AlignCenter)
         tagline.setObjectName("taglineLabel")
@@ -289,8 +300,11 @@ class ClipABitApp(QWidget):
         self.get_started_content.setVisible(not is_logged_in)
         self.search_content.setVisible(is_logged_in)
         
-        # Hide auth button in header when on get started screen
+        # Hide header elements when not logged in
         self.btn_auth.setVisible(is_logged_in)
+        self.btn_media_pool.setVisible(is_logged_in)
+        self.btn_jobs_debug.setVisible(is_logged_in)
+        self.logo_widget.setVisible(is_logged_in)
     
     def _create_header(self):
         """Create the header bar with logo and actions."""
