@@ -37,6 +37,7 @@ export CLIPABIT_AUTH0_AUDIENCE="https://api.clipabit.com"
 
 # Optional runtime mode flags
 export CLIPABIT_ENVIRONMENT="dev"      # dev (default), staging, prod
+export CLIPABIT_DEV_NAME="your-name"   # dev mode only, must match backend DEV_NAME
 ```
 
 On Windows PowerShell:
@@ -46,6 +47,7 @@ $env:CLIPABIT_AUTH0_DOMAIN = "your-tenant.auth0.com"
 $env:CLIPABIT_AUTH0_CLIENT_ID = "your_client_id"
 $env:CLIPABIT_AUTH0_AUDIENCE = "https://api.clipabit.com"
 $env:CLIPABIT_ENVIRONMENT = "dev"
+$env:CLIPABIT_DEV_NAME = "your-name"   # dev mode only
 ```
 
 You can also use a `.env` file. The plugin auto-loads `.env` values at startup (without overwriting already-exported variables). It looks in:
@@ -149,14 +151,9 @@ This watches the plugin source and syncs both:
 
 ### Managing Uploads
 
-1. Click the **⚙** (settings) button in the top-right
-2. Select files to upload for processing
-3. Monitor progress via **Active Jobs/Debug** button
-
-### Theme Toggle
-
-1. Click **⚙** (settings) button
-2. Click **Toggle Dark/Light Mode**
+1. Sign in via the **Get Started** button on the landing page
+2. Click **Media Pool** in the header to select and upload clips
+3. Monitor progress via the **i** (info) button in the header
 
 ## Configuration
 
@@ -168,6 +165,7 @@ This watches the plugin source and syncs both:
 | `CLIPABIT_AUTH0_CLIENT_ID` | Yes (for sign-in) | none | Auth0 application client ID |
 | `CLIPABIT_AUTH0_AUDIENCE` | Yes (for sign-in) | none | API audience used in token requests |
 | `CLIPABIT_ENVIRONMENT` | No | `dev` | `dev`, `staging`, `prod` |
+| `CLIPABIT_DEV_NAME` | No | `dev` | Your dev name prefix (dev mode only). Must match the `DEV_NAME` used when running the monorepo backend (e.g. `uv run dev eshaan` → `CLIPABIT_DEV_NAME=eshaan`). |
 
 ### File Locations
 
@@ -181,7 +179,7 @@ This watches the plugin source and syncs both:
 
 ### Staging prereleases
 - Pushes to `staging` run semantic-release automatically.
-- Tags are created as `vX.Y.Z-staging.N`.
+- Git tags use semver (e.g. `v1.1.1-staging.3`). The version in `pyproject.toml` is automatically converted to PEP 440 (e.g. `1.1.1rc3`) since Python tooling requires it.
 - `CHANGELOG.md` and `pyproject.toml` are updated.
 
 ### Promote to main (manual trigger)
