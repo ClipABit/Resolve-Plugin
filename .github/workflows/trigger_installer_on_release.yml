@@ -1,0 +1,25 @@
+name: trigger-installer-on-release
+
+on:
+  release:
+    types: [published]
+
+permissions: {}
+
+jobs:
+  dispatch-installer:
+    runs-on: ubuntu-latest
+    steps:
+      - name: dispatch installer build for released tag
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.INSTALLER_TRIGGER_TOKEN }}
+          script: |
+            await github.rest.repos.createDispatchEvent({
+              owner: 'ClipABit',
+              repo: 'installer',
+              event_type: 'resolve_plugin_release',
+              client_payload: {
+                release_tag: context.payload.release.tag_name
+              }
+            });
