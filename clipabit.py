@@ -1,6 +1,9 @@
 import sys
 import os
 
+from dotenv import load_dotenv
+load_dotenv()
+
 # Add the current directory to sys.path so we can import the 'clipabit' package
 # This dynamic detection works in both standalone Python and DaVinci Resolve
 import inspect

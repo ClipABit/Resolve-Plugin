@@ -8,6 +8,7 @@ dependencies = [
     "watchdog>=3.0.0",
     "auth0-python>=4.7.0",
     "keyring>=24.0.0",
+    "python-dotenv>=1.2.2",
 ]
 
 [dependency-groups]
