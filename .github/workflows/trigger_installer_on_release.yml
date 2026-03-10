@@ -4,21 +4,22 @@ on:
   release:
     types: [published]
 
-permissions:
-  contents: read
+permissions: {}
 
 jobs:
   dispatch-installer:
     runs-on: ubuntu-latest
     steps:
       - name: dispatch installer build for released tag
-        env:
-          INSTALLER_TRIGGER_TOKEN: ${{ secrets.INSTALLER_TRIGGER_TOKEN }}
-          RELEASE_TAG: ${{ github.event.release.tag_name }}
-        run: |
-          curl -sSf -X POST \
-            -H "Accept: application/vnd.github+json" \
-            -H "Authorization: Bearer ${INSTALLER_TRIGGER_TOKEN}" \
-            -H "X-GitHub-Api-Version: 2022-11-28" \
-            https://api.github.com/repos/ClipABit/installer/dispatches \
-            -d "$(jq -nc --arg release_tag \"${RELEASE_TAG}\" '{event_type:"resolve_plugin_release", client_payload:{release_tag:$release_tag}}')"
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.INSTALLER_TRIGGER_TOKEN }}
+          script: |
+            await github.rest.repos.createDispatchEvent({
+              owner: 'ClipABit',
+              repo: 'installer',
+              event_type: 'resolve_plugin_release',
+              client_payload: {
+                release_tag: context.payload.release.tag_name
+              }
+            });
