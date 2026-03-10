@@ -132,9 +132,9 @@ class AuthManager:
                         template = (_RESOURCES_DIR / "callback_success.html").read_text(encoding="utf-8")
                     html = template.replace("LOGO_SVG_PLACEHOLDER", logo_svg).encode()
                     self.wfile.write(html)
-                    if state_valid and has_terminal_auth_response:
+                    if has_terminal_auth_response:
                         event.set()
-                    elif state_valid:
+                    else:
                         print("[Auth] Callback missing code/error; waiting for terminal callback")
                 else:
                     self.send_response(404)

@@ -50,14 +50,6 @@ $env:CLIPABIT_ENVIRONMENT = "dev"
 $env:CLIPABIT_DEV_NAME = "your-name"   # dev mode only
 ```
 
-You can also use a `.env` file. The plugin auto-loads `.env` values at startup (without overwriting already-exported variables). It looks in:
-- current working directory
-- parent directories of the installed module path
-- Resolve utility script folder (`Fusion/Scripts/Utility/.env`) when running inside Resolve
-- `~/.clipabit/.env`
-
-You can force a specific file with `CLIPABIT_ENV_FILE=/absolute/path/to/.env`.
-
 ### 3. Preview the Plugin (Standalone)
 
 You can preview the UI without DaVinci Resolve:

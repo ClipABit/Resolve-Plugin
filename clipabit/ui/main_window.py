@@ -219,7 +219,7 @@ class ClipABitApp(QWidget):
         center_layout.setSpacing(12)
 
         # Large logo for landing page
-        logo_path = Path(__file__).parent.parent.parent / "assets" / "logo-dark.svg"
+        logo_path = Path(__file__).parent.parent / "assets" / "logo-dark.svg"
         if logo_path.exists():
             self.landing_logo = QSvgWidget(str(logo_path))
             self.landing_logo.setFixedSize(260, 120)
@@ -317,7 +317,7 @@ class ClipABitApp(QWidget):
         layout.setSpacing(10)
         
         # Logo on the left using SVG (maintain aspect ratio: original is 292x135)
-        logo_path = Path(__file__).parent.parent.parent / "assets" / "logo-dark.svg"
+        logo_path = Path(__file__).parent.parent / "assets" / "logo-dark.svg"
         if logo_path.exists():
             self.logo_widget = QSvgWidget(str(logo_path))
             self.logo_widget.setObjectName("logoWidget")
