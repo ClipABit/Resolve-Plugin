@@ -125,11 +125,16 @@ class AuthManager:
                     self.send_header("Content-type", "text/html")
                     self.end_headers()
                     logo_svg = (_RESOURCES_DIR / "logo.svg").read_text(encoding="utf-8")
-                    # Treat state mismatch and missing code as callback errors.
-                    if error or not result["state_valid"] or not code:
-                        template = (_RESOURCES_DIR / "callback_error.html").read_text(encoding="utf-8")
+                    # Only show success/error when we have a terminal response (code or error).
+                    # Otherwise show a neutral waiting page so the user doesn't see "Login Failed"
+                    # while the flow may still be in progress.
+                    if has_terminal_auth_response:
+                        if error or not result["state_valid"] or not code:
+                            template = (_RESOURCES_DIR / "callback_error.html").read_text(encoding="utf-8")
+                        else:
+                            template = (_RESOURCES_DIR / "callback_success.html").read_text(encoding="utf-8")
                     else:
-                        template = (_RESOURCES_DIR / "callback_success.html").read_text(encoding="utf-8")
+                        template = (_RESOURCES_DIR / "callback_waiting.html").read_text(encoding="utf-8")
                     html = template.replace("LOGO_SVG_PLACEHOLDER", logo_svg).encode()
                     self.wfile.write(html)
                     if has_terminal_auth_response:

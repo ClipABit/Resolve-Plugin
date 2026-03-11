@@ -1,25 +1,30 @@
 import sys
 import os
-
-from dotenv import load_dotenv
-load_dotenv()
-
-# Add the current directory to sys.path so we can import the 'clipabit' package
-# This dynamic detection works in both standalone Python and DaVinci Resolve
 import inspect
 
+# Resolve script path before load_dotenv so .env is found next to the script
+# (Resolve may run with CWD != script directory)
 try:
-    # Standard Python environment
     script_path = os.path.abspath(__file__)
 except NameError:
-    # DaVinci Resolve environment (where __file__ is undefined)
     try:
         script_path = os.path.abspath(inspect.getfile(inspect.currentframe()))
     except Exception:
-        # Fallback to current working directory if all else fails
         script_path = os.path.abspath(".")
-
 current_dir = os.path.dirname(script_path)
+
+from dotenv import load_dotenv
+# Load .env from script directory and from Fusion/Modules (clean install)
+for dotenv_dir in (current_dir, os.path.abspath(os.path.join(current_dir, "..", "..", "Modules"))):
+    env_path = os.path.join(dotenv_dir, ".env")
+    if os.path.isfile(env_path):
+        load_dotenv(dotenv_path=env_path)
+        break
+else:
+    load_dotenv()  # fallback: CWD or default search
+
+# Add the current directory to sys.path so we can import the 'clipabit' package
+# This dynamic detection works in both standalone Python and DaVinci Resolve
 
 # Smart Import Logic:
 # 1. Check current directory (simple co-located install)
