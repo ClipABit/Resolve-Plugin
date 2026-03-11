@@ -12,9 +12,9 @@ A semantic video search plugin for DaVinci Resolve that allows you to search thr
 
 ## Prerequisites
 
-* **Python 3.12+**
-* **uv** (recommended) or pip
-* **DaVinci Resolve Studio** (paid version required for scripting support)
+- **Python 3.12+**
+- **uv** (recommended) or pip
+- **DaVinci Resolve Studio** (paid version required for scripting support)
 
 ## Quick Start
 
@@ -64,10 +64,12 @@ When running outside Resolve, you'll see `Resolve API not available`. That is ex
 ### 4. Move into DaVinci Resolve
 
 Move both:
+
 - the shim (`clipabit.py`) into `Fusion/Scripts/Utility/` as `ClipABit.py`
 - the package (`clipabit/`) into `Fusion/Modules/clipabit`
 
 **macOS:**
+
 ```bash
 FUSION_DIR="$HOME/Library/Application Support/Blackmagic Design/DaVinci Resolve/Fusion"
 mkdir -p "$FUSION_DIR/Scripts/Utility" "$FUSION_DIR/Modules"
@@ -77,6 +79,7 @@ cp -R "clipabit" "$FUSION_DIR/Modules/clipabit"
 ```
 
 **Windows (PowerShell):**
+
 ```powershell
 $fusionDir = Join-Path $env:APPDATA "Blackmagic Design\DaVinci Resolve\Support\Fusion"
 New-Item -ItemType Directory -Path "$fusionDir\Scripts\Utility" -Force | Out-Null
@@ -87,6 +90,7 @@ Copy-Item ".\clipabit" "$fusionDir\Modules\clipabit" -Recurse -Force
 ```
 
 **Linux:**
+
 ```bash
 FUSION_DIR="$HOME/.local/share/DaVinci Resolve/Fusion"
 mkdir -p "$FUSION_DIR/Scripts/Utility" "$FUSION_DIR/Modules"
@@ -101,8 +105,6 @@ cp -R "clipabit" "$FUSION_DIR/Modules/clipabit"
 2. Open or create a project
 3. Navigate to: **Workspace → Scripts → Utility → ClipABit**
 4. The plugin window will open
-
-
 
 ## Development Workflow
 
@@ -129,6 +131,7 @@ uv run python watch_clipabit.py --source .
 ```
 
 This watches the plugin source and syncs both:
+
 - `clipabit.py` to `Fusion/Scripts/Utility/ClipABit.py`
 - `clipabit/` to `Fusion/Modules/clipabit`
 
@@ -151,35 +154,42 @@ This watches the plugin source and syncs both:
 
 ### Environment Settings
 
-| Variable | Required | Default | Notes |
-|----------|----------|---------|-------|
-| `CLIPABIT_AUTH0_DOMAIN` | Yes (for sign-in) | none | Auth0 tenant domain |
-| `CLIPABIT_AUTH0_CLIENT_ID` | Yes (for sign-in) | none | Auth0 application client ID |
-| `CLIPABIT_AUTH0_AUDIENCE` | Yes (for sign-in) | none | API audience used in token requests |
-| `CLIPABIT_ENVIRONMENT` | No | `dev` | `dev`, `staging`, `prod` |
-| `CLIPABIT_DEV_NAME` | No | `dev` | Your dev name prefix (dev mode only). Must match the `DEV_NAME` used when running the monorepo backend (e.g. `uv run dev eshaan` → `CLIPABIT_DEV_NAME=eshaan`). |
+
+| Variable                   | Required          | Default | Notes                                                                                                                                                           |
+| -------------------------- | ----------------- | ------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `CLIPABIT_AUTH0_DOMAIN`    | Yes (for sign-in) | none    | Auth0 tenant domain                                                                                                                                             |
+| `CLIPABIT_AUTH0_CLIENT_ID` | Yes (for sign-in) | none    | Auth0 application client ID                                                                                                                                     |
+| `CLIPABIT_AUTH0_AUDIENCE`  | Yes (for sign-in) | none    | API audience used in token requests                                                                                                                             |
+| `CLIPABIT_ENVIRONMENT`     | No                | `dev`   | `dev`, `staging`, `prod`                                                                                                                                        |
+| `CLIPABIT_DEV_NAME`        | No                | `dev`   | Your dev name prefix (dev mode only). Must match the `DEV_NAME` used when running the monorepo backend (e.g. `uv run dev eshaan` → `CLIPABIT_DEV_NAME=eshaan`). |
+
 
 ### File Locations
 
-| Platform | Utility Script Path | Modules Path |
-|----------|----------------------|--------------|
-| **macOS** | `~/Library/Application Support/Blackmagic Design/DaVinci Resolve/Fusion/Scripts/Utility/ClipABit.py` | `~/Library/Application Support/Blackmagic Design/DaVinci Resolve/Fusion/Modules/clipabit/` |
-| **Windows** | `%APPDATA%\Blackmagic Design\DaVinci Resolve\Support\Fusion\Scripts\Utility\ClipABit.py` | `%APPDATA%\Blackmagic Design\DaVinci Resolve\Support\Fusion\Modules\clipabit\` |
-| **Linux** | `~/.local/share/DaVinci Resolve/Fusion/Scripts/Utility/ClipABit.py` | `~/.local/share/DaVinci Resolve/Fusion/Modules/clipabit/` |
+
+| Platform    | Utility Script Path                                                                                  | Modules Path                                                                               |
+| ----------- | ---------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
+| **macOS**   | `~/Library/Application Support/Blackmagic Design/DaVinci Resolve/Fusion/Scripts/Utility/ClipABit.py` | `~/Library/Application Support/Blackmagic Design/DaVinci Resolve/Fusion/Modules/clipabit/` |
+| **Windows** | `%APPDATA%\Blackmagic Design\DaVinci Resolve\Support\Fusion\Scripts\Utility\ClipABit.py`             | `%APPDATA%\Blackmagic Design\DaVinci Resolve\Support\Fusion\Modules\clipabit\`             |
+| **Linux**   | `~/.local/share/DaVinci Resolve/Fusion/Scripts/Utility/ClipABit.py`                                  | `~/.local/share/DaVinci Resolve/Fusion/Modules/clipabit/`                                  |
+
 
 ## Release Flow (Automated)
 
 ### Staging prereleases
+
 - Pushes to `staging` run semantic-release automatically.
 - Git tags use semver (e.g. `v1.1.1-staging.3`). The version in `pyproject.toml` is automatically converted to PEP 440 (e.g. `1.1.1rc3`) since Python tooling requires it.
 - `CHANGELOG.md` and `pyproject.toml` are updated.
 
 ### Promote to main (manual trigger)
+
 - Use GitHub Actions workflow **Promote staging to main**.
 - It asks for **release type** (`patch`, `minor`, `major`).
 - It merges `staging` → `main`, then runs semantic-release on `main` with the chosen release type.
 
 ### Permissions probe
+
 - Run **Permissions Probe** workflow to verify whether `GITHUB_TOKEN` has write access.
 - If it fails, org-level settings likely block write permissions.
 
@@ -203,8 +213,8 @@ This watches the plugin source and syncs both:
 
 ### "Auth0 environment variables are not set"
 
-- Set `CLIPABIT_AUTH0_DOMAIN`, `CLIPABIT_AUTH0_CLIENT_ID`, and `CLIPABIT_AUTH0_AUDIENCE`
-- Or create a `.env` file in one of the auto-loaded locations listed above
+- Set `CLIPABIT_AUTH0_DOMAIN`, `CLIPABIT_AUTH0_CLIENT_ID`, and `CLIPABIT_AUTH0_AUDIENCE` in an `.env` file.
+ 
 
 ## File Structure
 
@@ -229,3 +239,4 @@ This watches the plugin source and syncs both:
 - **Modal.com Backend**: Serverless video processing
 - **Pinecone Vector Database**: Semantic search with CLIP embeddings
 - **Cloudflare R2**: Video file storage
+
