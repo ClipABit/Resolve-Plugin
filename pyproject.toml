@@ -1,17 +1,18 @@
 [project]
 name = "clipabit-plugin"
-version = "1.1.0"
-requires-python = ">=3.12"
+version = "1.1.1rc4"
+requires-python = ">=3.11"
 dependencies = [
     "pyqt6>=6.10.0",
     "requests>=2.31.0",
-    "watchdog>=3.0.0",
     "auth0-python>=4.7.0",
     "keyring>=24.0.0",
+    "python-dotenv>=1.2.2",
 ]
 
 [dependency-groups]
 dev = [
     "pyqt6>=6.10.0",
     "ruff>=0.15.0",
+    "watchdog>=3.0.0",
 ]

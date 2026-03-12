@@ -1,3 +1,17 @@
+## [1.1.1-staging.4](https://github.com/ClipABit/Resolve-Plugin/compare/v1.1.1-staging.3...v1.1.1-staging.4) (2026-03-12)
+
+### Bug Fixes
+
+* addresses auth error/success bug ([04cd67d](https://github.com/ClipABit/Resolve-Plugin/commit/04cd67d2934b3627845fc67353df4dc555702425))
+
+## [1.1.1-staging.4](https://github.com/ClipABit/Resolve-Plugin/compare/v1.1.1-staging.3...v1.1.1-staging.4) (2026-03-10)
+
+## [1.1.1-staging.3](https://github.com/ClipABit/Resolve-Plugin/compare/v1.1.1-staging.2...v1.1.1-staging.3) (2026-03-06)
+
+## [1.1.1-staging.2](https://github.com/ClipABit/Resolve-Plugin/compare/v1.1.1-staging.1...v1.1.1-staging.2) (2026-03-06)
+
+## [1.1.1-staging.1](https://github.com/ClipABit/Resolve-Plugin/compare/v1.1.0...v1.1.1-staging.1) (2026-03-06)
+
 ## [1.1.0](https://github.com/ClipABit/Resolve-Plugin/compare/v1.0.0...v1.1.0) (2026-01-30)
 
 ## 1.0.0 (2026-01-30)

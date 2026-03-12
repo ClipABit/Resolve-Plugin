@@ -12,101 +12,128 @@ A semantic video search plugin for DaVinci Resolve that allows you to search thr
 
 ## Prerequisites
 
-* **Python 3.12+**
-* **uv** (recommended) or pip
-* **DaVinci Resolve Studio** (paid version required for scripting support)
+- **Python 3.12+**
+- **uv** (recommended) or pip
+- **DaVinci Resolve Studio** (paid version required for scripting support)
 
 ## Quick Start
 
 ### 1. Install Dependencies
 
 ```bash
-# Navigate to plugin directory
-cd plugin
-
-# Create virtual environment and install dependencies
-uv venv
-source .venv/bin/activate
-uv pip install -e .
-
-# Or install globally via pip
-pip install PyQt6 requests watchdog
+# From repository root
+uv sync
 ```
 
-### 2. Preview the Plugin (Standalone)
+### 2. Configure Environment Variables
+
+Set these before running the plugin:
+
+```bash
+# Required for authentication
+export CLIPABIT_AUTH0_DOMAIN="your-tenant.auth0.com"
+export CLIPABIT_AUTH0_CLIENT_ID="your_client_id"
+export CLIPABIT_AUTH0_AUDIENCE="https://api.clipabit.com"
+
+# Optional runtime mode flags
+export CLIPABIT_ENVIRONMENT="dev"      # dev (default), staging, prod
+export CLIPABIT_DEV_NAME="your-name"   # dev mode only, must match backend DEV_NAME
+```
+
+On Windows PowerShell:
+
+```powershell
+$env:CLIPABIT_AUTH0_DOMAIN = "your-tenant.auth0.com"
+$env:CLIPABIT_AUTH0_CLIENT_ID = "your_client_id"
+$env:CLIPABIT_AUTH0_AUDIENCE = "https://api.clipabit.com"
+$env:CLIPABIT_ENVIRONMENT = "dev"
+$env:CLIPABIT_DEV_NAME = "your-name"   # dev mode only
+```
+
+### 3. Preview the Plugin (Standalone)
 
 You can preview the UI without DaVinci Resolve:
 
 ```bash
-# Navigate to plugin directory
-cd plugin
-
-# Activate virtual environment
-source .venv/bin/activate
-
-# Run the plugin
-python clipabit.py
-
-# Close the window (Cmd+Q on Mac) and re-run to see new changes
+# From repository root
+uv run python clipabit.py
 ```
 
-### 3. Install in DaVinci Resolve
+When running outside Resolve, you'll see `Resolve API not available`. That is expected.
 
-Copy the plugin to DaVinci Resolve's Scripts folder:
+### 4. Move into DaVinci Resolve
+
+Move both:
+
+- the shim (`clipabit.py`) into `Fusion/Scripts/Utility/` as `ClipABit.py`
+- the package (`clipabit/`) into `Fusion/Modules/clipabit`
 
 **macOS:**
+
 ```bash
-cp "plugin/clipabit.py" "$HOME/Library/Application Support/Blackmagic Design/DaVinci Resolve 20/Fusion/Scripts/Edit/"
+FUSION_DIR="$HOME/Library/Application Support/Blackmagic Design/DaVinci Resolve/Fusion"
+mkdir -p "$FUSION_DIR/Scripts/Utility" "$FUSION_DIR/Modules"
+cp "clipabit.py" "$FUSION_DIR/Scripts/Utility/ClipABit.py"
+rm -rf "$FUSION_DIR/Modules/clipabit"
+cp -R "clipabit" "$FUSION_DIR/Modules/clipabit"
 ```
 
 **Windows (PowerShell):**
+
 ```powershell
-Copy-Item "plugin\clipabit.py" "$env:APPDATA\Blackmagic Design\DaVinci Resolve\Support\Fusion\Scripts\Utility\"
+$fusionDir = Join-Path $env:APPDATA "Blackmagic Design\DaVinci Resolve\Support\Fusion"
+New-Item -ItemType Directory -Path "$fusionDir\Scripts\Utility" -Force | Out-Null
+New-Item -ItemType Directory -Path "$fusionDir\Modules" -Force | Out-Null
+Copy-Item ".\clipabit.py" "$fusionDir\Scripts\Utility\ClipABit.py" -Force
+Remove-Item "$fusionDir\Modules\clipabit" -Recurse -Force -ErrorAction SilentlyContinue
+Copy-Item ".\clipabit" "$fusionDir\Modules\clipabit" -Recurse -Force
 ```
 
 **Linux:**
+
 ```bash
-cp "plugin/clipabit.py" "$HOME/.local/share/DaVinci Resolve/Fusion/Scripts/Edit/"
+FUSION_DIR="$HOME/.local/share/DaVinci Resolve/Fusion"
+mkdir -p "$FUSION_DIR/Scripts/Utility" "$FUSION_DIR/Modules"
+cp "clipabit.py" "$FUSION_DIR/Scripts/Utility/ClipABit.py"
+rm -rf "$FUSION_DIR/Modules/clipabit"
+cp -R "clipabit" "$FUSION_DIR/Modules/clipabit"
 ```
 
-### 4. Run in DaVinci Resolve
+### 5. Run in DaVinci Resolve
 
 1. Open DaVinci Resolve
 2. Open or create a project
-3. Navigate to: **Workspace → Scripts → clipabit**
+3. Navigate to: **Workspace → Scripts → Utility → ClipABit**
 4. The plugin window will open
-
-> **Note**: Scripting is only available in **DaVinci Resolve Studio** (paid version). The free version does not support Python scripting.
 
 ## Development Workflow
 
 ### Making Changes
 
 ```bash
-# 1. Make changes to clipabit.py in your editor
+# 1. Make changes in clipabit.py and/or clipabit/
 
 # 2. Run to preview
-cd plugin
-source .venv/bin/activate
-python clipabit.py
+uv run python clipabit.py
 
 # 3. Close the window (Cmd+Q) and re-run to see new changes
 
-# 4. When ready, copy to Resolve
-cp "clipabit.py" "$HOME/Library/Application Support/Blackmagic Design/DaVinci Resolve 20/Fusion/Scripts/Edit/"
+# 4. Sync to Resolve (see install commands above)
 ```
 
 ### Using the File Watcher (Optional)
 
-For automatic copying during development:
+For automatic sync during development:
 
 ```bash
 # From the repository root
-source plugin/.venv/bin/activate
-python watch_clipabit.py --source plugin/clipabit.py
+uv run python watch_clipabit.py --source .
 ```
 
-This watches for changes and automatically copies to Resolve's Scripts folder.
+This watches the plugin source and syncs both:
+
+- `clipabit.py` to `Fusion/Scripts/Utility/ClipABit.py`
+- `clipabit/` to `Fusion/Modules/clipabit`
 
 ## Usage
 
@@ -119,45 +146,50 @@ This watches for changes and automatically copies to Resolve's Scripts folder.
 
 ### Managing Uploads
 
-1. Click the **⚙** (settings) button in the top-right
-2. Select files to upload for processing
-3. Monitor progress via **Active Jobs/Debug** button
-
-### Theme Toggle
-
-1. Click **⚙** (settings) button
-2. Click **Toggle Dark/Light Mode**
+1. Sign in via the **Get Started** button on the landing page
+2. Click **Media Pool** in the header to select and upload clips
+3. Monitor progress via the **i** (info) button in the header
 
 ## Configuration
 
 ### Environment Settings
 
-Set the `CLIPABIT_ENVIRONMENT` environment variable:
-- `dev` (default) - Development environment
-- `prod` - Production environment
-- `staging` - Staging environment
+
+| Variable                   | Required          | Default | Notes                                                                                                                                                           |
+| -------------------------- | ----------------- | ------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `CLIPABIT_AUTH0_DOMAIN`    | Yes (for sign-in) | none    | Auth0 tenant domain                                                                                                                                             |
+| `CLIPABIT_AUTH0_CLIENT_ID` | Yes (for sign-in) | none    | Auth0 application client ID                                                                                                                                     |
+| `CLIPABIT_AUTH0_AUDIENCE`  | Yes (for sign-in) | none    | API audience used in token requests                                                                                                                             |
+| `CLIPABIT_ENVIRONMENT`     | No                | `dev`   | `dev`, `staging`, `prod`                                                                                                                                        |
+| `CLIPABIT_DEV_NAME`        | No                | `dev`   | Your dev name prefix (dev mode only). Must match the `DEV_NAME` used when running the monorepo backend (e.g. `uv run dev eshaan` → `CLIPABIT_DEV_NAME=eshaan`). |
+
 
 ### File Locations
 
-| Platform | Scripts Location |
-|----------|-----------------|
-| **macOS** | `~/Library/Application Support/Blackmagic Design/DaVinci Resolve 20/Fusion/Scripts/Edit/` |
-| **Windows** | `%APPDATA%\Blackmagic Design\DaVinci Resolve\Support\Fusion\Scripts\Utility\` |
-| **Linux** | `~/.local/share/DaVinci Resolve/Fusion/Scripts/Edit/` |
+
+| Platform    | Utility Script Path                                                                                  | Modules Path                                                                               |
+| ----------- | ---------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
+| **macOS**   | `~/Library/Application Support/Blackmagic Design/DaVinci Resolve/Fusion/Scripts/Utility/ClipABit.py` | `~/Library/Application Support/Blackmagic Design/DaVinci Resolve/Fusion/Modules/clipabit/` |
+| **Windows** | `%APPDATA%\Blackmagic Design\DaVinci Resolve\Support\Fusion\Scripts\Utility\ClipABit.py`             | `%APPDATA%\Blackmagic Design\DaVinci Resolve\Support\Fusion\Modules\clipabit\`             |
+| **Linux**   | `~/.local/share/DaVinci Resolve/Fusion/Scripts/Utility/ClipABit.py`                                  | `~/.local/share/DaVinci Resolve/Fusion/Modules/clipabit/`                                  |
+
 
 ## Release Flow (Automated)
 
 ### Staging prereleases
+
 - Pushes to `staging` run semantic-release automatically.
-- Tags are created as `vX.Y.Z-staging.N`.
-- `plugin/CHANGELOG.md` and `plugin/pyproject.toml` are updated.
+- Git tags use semver (e.g. `v1.1.1-staging.3`). The version in `pyproject.toml` is automatically converted to PEP 440 (e.g. `1.1.1rc3`) since Python tooling requires it.
+- `CHANGELOG.md` and `pyproject.toml` are updated.
 
 ### Promote to main (manual trigger)
+
 - Use GitHub Actions workflow **Promote staging to main**.
 - It asks for **release type** (`patch`, `minor`, `major`).
 - It merges `staging` → `main`, then runs semantic-release on `main` with the chosen release type.
 
 ### Permissions probe
+
 - Run **Permissions Probe** workflow to verify whether `GITHUB_TOKEN` has write access.
 - If it fails, org-level settings likely block write permissions.
 
@@ -176,19 +208,29 @@ Set the `CLIPABIT_ENVIRONMENT` environment variable:
 ### Plugin Doesn't Appear After Copying
 
 1. Restart DaVinci Resolve completely
-2. Make sure you copied to the correct folder for your Resolve version
+2. Confirm both targets exist: `Fusion/Scripts/Utility/ClipABit.py` and `Fusion/Modules/clipabit/`
 3. Check **Preferences → System → External scripting using** is set to **Local**
+
+### "Auth0 environment variables are not set"
+
+- Set `CLIPABIT_AUTH0_DOMAIN`, `CLIPABIT_AUTH0_CLIENT_ID`, and `CLIPABIT_AUTH0_AUDIENCE` in an `.env` file.
+ 
 
 ## File Structure
 
 ```
-plugin/
-├── clipabit.py          # Main plugin file
-├── pyproject.toml       # Dependencies
-├── README.md            # This file
-└── uv.lock              # Dependency lock file
-
-watch_clipabit.py        # Development file watcher (in repo root)
+.
+├── clipabit.py          # Resolve shim / standalone entry point
+├── clipabit/            # Main plugin package (sync to Fusion/Modules/clipabit)
+│   ├── api/             # Auth and backend API client/config
+│   ├── core/            # Upload/job/file utilities
+│   ├── ui/              # PyQt6 application UI
+│   └── assets/          # UI assets
+├── watch_clipabit.py    # Development sync watcher (shim + package)
+├── scripts/             # Release and auth utility scripts
+├── pyproject.toml       # Project dependencies
+├── uv.lock              # Dependency lock file
+└── README.md            # This file
 ```
 
 ## Architecture
@@ -197,3 +239,4 @@ watch_clipabit.py        # Development file watcher (in repo root)
 - **Modal.com Backend**: Serverless video processing
 - **Pinecone Vector Database**: Semantic search with CLIP embeddings
 - **Cloudflare R2**: Video file storage
+
