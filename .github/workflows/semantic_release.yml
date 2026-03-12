@@ -2,7 +2,7 @@ name: semantic-release
 
 on:
   push:
-    branches: [ staging ]
+    branches: [ staging, main ]
 
 permissions:
   contents: write
