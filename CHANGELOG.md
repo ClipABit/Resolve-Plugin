@@ -1,3 +1,9 @@
+## [1.1.1](https://github.com/ClipABit/Resolve-Plugin/compare/v1.1.0...v1.1.1) (2026-03-12)
+
+### Bug Fixes
+
+* semantic release triggers on push to main ([08e57b2](https://github.com/ClipABit/Resolve-Plugin/commit/08e57b25742c1ce0b01b45931c34b1429421eee0))
+
 ## [1.1.1-staging.4](https://github.com/ClipABit/Resolve-Plugin/compare/v1.1.1-staging.3...v1.1.1-staging.4) (2026-03-12)
 
 ### Bug Fixes
