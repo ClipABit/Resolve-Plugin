@@ -181,6 +181,7 @@ This watches the plugin source and syncs both:
 - Pushes to `staging` run semantic-release automatically.
 - Git tags use semver (e.g. `v1.1.1-staging.3`). The version in `pyproject.toml` is automatically converted to PEP 440 (e.g. `1.1.1rc3`) since Python tooling requires it.
 - `CHANGELOG.md` and `pyproject.toml` are updated.
+- Release asset zips are built and attached to each GitHub release: `clipabit.zip` and `clipabit-v<version>.zip`.
 
 ### Promote to main (manual trigger)
 

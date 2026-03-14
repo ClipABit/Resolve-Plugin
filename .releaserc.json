@@ -48,7 +48,7 @@
       "@semantic-release/exec",
       {
         "analyzeCommitsCmd": "python scripts/release_type.py",
-        "prepareCmd": "python scripts/bump_version.py ${nextRelease.version}"
+        "prepareCmd": "python scripts/bump_version.py ${nextRelease.version} && python scripts/build_release_zip.py ${nextRelease.version}"
       }
     ],
     [
@@ -61,6 +61,13 @@
         "message": "chore(release): ${nextRelease.version} [skip ci]\n\n${nextRelease.notes}"
       }
     ],
-    "@semantic-release/github"
+    [
+      "@semantic-release/github",
+      {
+        "assets": [
+          "release/clipabit*.zip"
+        ]
+      }
+    ]
   ]
 }
