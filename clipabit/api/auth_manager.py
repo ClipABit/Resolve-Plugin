@@ -26,9 +26,9 @@ class AuthManager:
     SCOPES = "openid profile email offline_access read:clips write:clips read:profile manage:projects"
 
     def __init__(self):
-        self.AUTH0_DOMAIN = os.environ.get("CLIPABIT_AUTH0_DOMAIN", "")
-        self.CLIENT_ID = os.environ.get("CLIPABIT_AUTH0_CLIENT_ID", "")
-        self.AUDIENCE = os.environ.get("CLIPABIT_AUTH0_AUDIENCE", "")
+        self.AUTH0_DOMAIN = os.environ.get("CLIPABIT_AUTH0_DOMAIN", "dev-4v5a85yv6xnj8jci.ca.auth0.com")
+        self.CLIENT_ID = os.environ.get("CLIPABIT_AUTH0_CLIENT_ID", "Uw6R7qrpxxfP1RdfjVb1bU1Sv6j4lBzT")
+        self.AUDIENCE = os.environ.get("CLIPABIT_AUTH0_AUDIENCE", "https://clipabit-staging-9ec32.web.app")
 
         missing = [
             name

@@ -110,8 +110,6 @@ class ClipABitApp(QWidget):
         self.clip_map = {}
         self.processed_files = self._load_processed_files()
         self.current_jobs = {}  # job_id -> job_info
-        self.dialog_jobs_list = None
-        self.dialog_file_status = None
         
         # Upload queue system
         self.upload_queue = []  # List of files waiting to be uploaded
@@ -194,10 +192,10 @@ class ClipABitApp(QWidget):
         self.search_content = self._create_search_content()
         main_layout.addWidget(self.search_content, 1)
         
-        # Internal status label (kept for message plumbing, not shown in UI)
+        # Status bar (minimal)
         self.status_label = QLabel("Ready")
         self.status_label.setObjectName("statusBar")
-        self.status_label.setVisible(False)
+        main_layout.addWidget(self.status_label)
         
         self.setLayout(main_layout)
         
@@ -211,25 +209,14 @@ class ClipABitApp(QWidget):
         layout = QVBoxLayout()
         layout.setSpacing(0)
         layout.setContentsMargins(0, 0, 0, 0)
-
+        
         # Center container
         center_container = QWidget()
         center_layout = QVBoxLayout()
         center_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        center_layout.setSpacing(12)
-
-        # Large logo for landing page
-        logo_path = Path(__file__).parent.parent / "assets" / "logo-dark.svg"
-        if logo_path.exists():
-            self.landing_logo = QSvgWidget(str(logo_path))
-            self.landing_logo.setFixedSize(260, 120)
-        else:
-            self.landing_logo = QLabel("ClipABit")
-            self.landing_logo.setStyleSheet("font-size: 32px; font-weight: bold;")
-            self.landing_logo.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        center_layout.addWidget(self.landing_logo, alignment=Qt.AlignmentFlag.AlignCenter)
-
-        # Tagline text
+        center_layout.setSpacing(30)
+        
+        # Tagline text (centered, no logo)
         tagline = QLabel("Search by ideas, not timestamps.")
         tagline.setAlignment(Qt.AlignmentFlag.AlignCenter)
         tagline.setObjectName("taglineLabel")
@@ -270,6 +257,10 @@ class ClipABitApp(QWidget):
         search_container = self._create_search_bar()
         content_layout.addWidget(search_container, alignment=Qt.AlignmentFlag.AlignCenter)
         
+        # Upload CTA section
+        upload_section = self._create_upload_section()
+        content_layout.addWidget(upload_section, alignment=Qt.AlignmentFlag.AlignCenter)
+        
         # Results area (grid or empty state)
         self.results_container = QWidget()
         self.results_layout = QVBoxLayout()
@@ -282,10 +273,12 @@ class ClipABitApp(QWidget):
         self.empty_state_label.setObjectName("emptyState")
         self.results_layout.addWidget(self.empty_state_label)
         
-        # Scroll area for results
+        # Scroll area for results (hidden scrollbars for cleaner look)
         self.results_scroll = QScrollArea()
         self.results_scroll.setWidgetResizable(True)
         self.results_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        self.results_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.results_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.results_scroll.setWidget(self.results_container)
         content_layout.addWidget(self.results_scroll, 1)
         
@@ -300,14 +293,15 @@ class ClipABitApp(QWidget):
         self.get_started_content.setVisible(not is_logged_in)
         self.search_content.setVisible(is_logged_in)
         
-        # Hide header elements when not logged in
+        # Hide auth button in header when on get started screen
         self.btn_auth.setVisible(is_logged_in)
-        self.btn_media_pool.setVisible(is_logged_in)
-        self.btn_jobs_debug.setVisible(is_logged_in)
-        self.logo_widget.setVisible(is_logged_in)
+        
+        # Update upload section when logged in
+        if is_logged_in:
+            self._update_upload_section()
     
     def _create_header(self):
-        """Create the header bar with logo and actions."""
+        """Create the header bar with logo, Active Jobs/Debug button, settings, and close button."""
         header = QWidget()
         header.setFixedHeight(80)
         header.setObjectName("header")
@@ -317,7 +311,7 @@ class ClipABitApp(QWidget):
         layout.setSpacing(10)
         
         # Logo on the left using SVG (maintain aspect ratio: original is 292x135)
-        logo_path = Path(__file__).parent.parent / "assets" / "logo-dark.svg"
+        logo_path = Path(__file__).parent.parent.parent / "assets" / "logo-dark.svg"
         if logo_path.exists():
             self.logo_widget = QSvgWidget(str(logo_path))
             self.logo_widget.setObjectName("logoWidget")
@@ -339,16 +333,28 @@ class ClipABitApp(QWidget):
         # Media Pool button
         self.btn_media_pool = QPushButton("Media Pool")
         self.btn_media_pool.setObjectName("headerButtonSecondary")
-        self.btn_media_pool.clicked.connect(self._show_upload_dialog)
+        self.btn_media_pool.clicked.connect(self._show_settings_dialog)
         layout.addWidget(self.btn_media_pool)
         
-        # Small info icon button (top-right action)
-        self.btn_jobs_debug = QPushButton("i")
-        self.btn_jobs_debug.setObjectName("infoIconButton")
-        self.btn_jobs_debug.setFixedSize(24, 24)
-        self.btn_jobs_debug.setToolTip("Info")
+        # Debug button
+        self.btn_jobs_debug = QPushButton("Debug")
+        self.btn_jobs_debug.setObjectName("headerButtonSecondary")
         self.btn_jobs_debug.clicked.connect(self._show_jobs_dialog)
         layout.addWidget(self.btn_jobs_debug)
+        
+        # Settings button (gear icon) - use image placeholder
+        self.btn_settings = QPushButton()
+        self.btn_settings.setObjectName("settingsButton")
+        self.btn_settings.setFixedSize(46, 45)
+        self.btn_settings.clicked.connect(self._show_settings_dialog)
+        layout.addWidget(self.btn_settings)
+        
+        # Close button (X) on the right
+        self.btn_close = QPushButton("✕")
+        self.btn_close.setObjectName("closeButton")
+        self.btn_close.setFixedSize(40, 40)
+        self.btn_close.clicked.connect(self.close)
+        layout.addWidget(self.btn_close)
         
         header.setLayout(layout)
         return header
@@ -386,6 +392,8 @@ class ClipABitApp(QWidget):
         """Handle login flow completion."""
         self._update_auth_button()
         if success:
+            self._update_empty_state()
+            self._update_upload_section()
             if self.upload_queue and not self.is_uploading:
                 QTimer.singleShot(100, self._process_upload_queue)
         elif message != "Login successful!":
@@ -431,7 +439,159 @@ class ClipABitApp(QWidget):
         
         container.setLayout(layout)
         return container
-    
+
+    def _create_upload_section(self):
+        """Create the upload CTA section with Browse button, file count, and help tooltip."""
+        # Main container for the upload section
+        self.upload_section = QWidget()
+        self.upload_section.setObjectName("uploadSection")
+        self.upload_section.setMinimumWidth(375)
+        self.upload_section.setMaximumWidth(450)
+        from PyQt6.QtWidgets import QSizePolicy
+        self.upload_section.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Minimum)
+        
+        section_layout = QVBoxLayout()
+        section_layout.setContentsMargins(0, 0, 0, 0)
+        section_layout.setSpacing(12)
+        
+        # Upload box with dashed border
+        self.upload_box = QFrame()
+        self.upload_box.setObjectName("uploadBox")
+        self.upload_box.setFrameShape(QFrame.Shape.StyledPanel)
+        self.upload_box.setMinimumHeight(240)
+        self.upload_box.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
+        
+        upload_box_layout = QVBoxLayout()
+        upload_box_layout.setContentsMargins(30, 25, 30, 25)
+        upload_box_layout.setSpacing(12)
+        upload_box_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        
+        # Upload icon (cloud with arrow)
+        self.upload_icon_label = QLabel("⬆")
+        self.upload_icon_label.setObjectName("uploadIcon")
+        self.upload_icon_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.upload_icon_label.setStyleSheet("background: transparent;")
+        upload_box_layout.addWidget(self.upload_icon_label)
+        
+        # Browse button row with file count badge
+        browse_row = QWidget()
+        browse_row.setStyleSheet("background: transparent;")
+        browse_row_layout = QHBoxLayout()
+        browse_row_layout.setContentsMargins(0, 0, 0, 0)
+        browse_row_layout.setSpacing(12)
+        browse_row_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        
+        # Browse button (pill-shaped, accent color)
+        self.btn_browse = QPushButton("Browse")
+        self.btn_browse.setObjectName("browseButton")
+        self.btn_browse.setFixedSize(120, 40)
+        self.btn_browse.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_browse.clicked.connect(self._on_browse_clicked)
+        self.btn_browse.setStyleSheet("""
+            QPushButton {
+                background-color: #FAAF04;
+                color: #FFFFFF;
+                border: none;
+                border-radius: 20px;
+                font-size: 14px;
+                font-weight: 600;
+            }
+            QPushButton:hover {
+                background-color: #E09A00;
+            }
+        """)
+        browse_row_layout.addWidget(self.btn_browse)
+        
+        # File count badge
+        self.file_count_badge = QLabel("")
+        self.file_count_badge.setObjectName("fileCountBadge")
+        self.file_count_badge.setVisible(False)
+        browse_row_layout.addWidget(self.file_count_badge)
+        
+        browse_row.setLayout(browse_row_layout)
+        upload_box_layout.addWidget(browse_row)
+        
+        # Subtitle row with info button
+        subtitle_row = QWidget()
+        subtitle_row.setStyleSheet("background: transparent;")
+        subtitle_row_layout = QHBoxLayout()
+        subtitle_row_layout.setContentsMargins(0, 0, 0, 0)
+        subtitle_row_layout.setSpacing(8)
+        subtitle_row_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        
+        self.upload_subtitle = QLabel("drop a file here")
+        self.upload_subtitle.setObjectName("uploadSubtitle")
+        self.upload_subtitle.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        subtitle_row_layout.addWidget(self.upload_subtitle)
+        
+        # Info toggle button
+        self.btn_info_toggle = QPushButton("?")
+        self.btn_info_toggle.setObjectName("infoToggleButton")
+        self.btn_info_toggle.setFixedSize(24, 24)
+        self.btn_info_toggle.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_info_toggle.setCheckable(True)
+        self.btn_info_toggle.clicked.connect(self._toggle_upload_help)
+        subtitle_row_layout.addWidget(self.btn_info_toggle)
+        
+        subtitle_row.setLayout(subtitle_row_layout)
+        upload_box_layout.addWidget(subtitle_row)
+        
+        self.upload_box.setLayout(upload_box_layout)
+        section_layout.addWidget(self.upload_box)
+        
+        # Help tooltip (appears below upload box when toggled)
+        self.upload_help_container = QFrame()
+        self.upload_help_container.setObjectName("uploadHelpContainer")
+        self.upload_help_container.setVisible(False)
+        self.upload_help_container.setMaximumWidth(400)
+        
+        help_layout = QVBoxLayout()
+        help_layout.setContentsMargins(16, 12, 16, 12)
+        help_layout.setSpacing(8)
+        
+        self.upload_help_text = QLabel(
+            "Upload your media pool clips to enable AI-powered search.\n"
+            "Processing takes a few minutes per file."
+        )
+        self.upload_help_text.setObjectName("uploadHelpText")
+        self.upload_help_text.setWordWrap(True)
+        self.upload_help_text.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        help_layout.addWidget(self.upload_help_text)
+        
+        self.upload_help_container.setLayout(help_layout)
+        section_layout.addWidget(self.upload_help_container, alignment=Qt.AlignmentFlag.AlignCenter)
+        
+        # Empty state message (shown when no files in media pool)
+        self.upload_empty_state = QLabel("Add files to your Media Pool in DaVinci Resolve to begin")
+        self.upload_empty_state.setObjectName("uploadEmptyState")
+        self.upload_empty_state.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.upload_empty_state.setWordWrap(True)
+        self.upload_empty_state.setVisible(False)
+        section_layout.addWidget(self.upload_empty_state)
+        
+        # Progress container (for showing upload progress)
+        self.upload_progress_container = QFrame()
+        self.upload_progress_container.setObjectName("uploadProgressContainer")
+        self.upload_progress_container.setVisible(False)
+        
+        progress_layout = QVBoxLayout()
+        progress_layout.setContentsMargins(0, 0, 0, 0)
+        progress_layout.setSpacing(8)
+        self.upload_progress_container.setLayout(progress_layout)
+        section_layout.addWidget(self.upload_progress_container)
+        
+        self.upload_section.setLayout(section_layout)
+        return self.upload_section
+
+    def _on_browse_clicked(self):
+        """Handle Browse button click - opens file selection."""
+        self._select_files_to_upload()
+
+    def _toggle_upload_help(self):
+        """Toggle the visibility of the upload help tooltip."""
+        is_expanded = self.btn_info_toggle.isChecked()
+        self.upload_help_container.setVisible(is_expanded)
+
     def _clear_search(self):
         """Clear the search input and results."""
         self.search_input.clear()
@@ -472,7 +632,7 @@ class ClipABitApp(QWidget):
             QWidget {{
                 background-color: {t['background']};
                 color: {t['text']};
-                font-family: 'Helvetica Neue', 'Segoe UI', Roboto, sans-serif;
+                font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
             }}
             
             /* Header */
@@ -527,7 +687,7 @@ class ClipABitApp(QWidget):
                 background-color: {t['accent_hover']};
             }}
             
-            /* Header button secondary (Media Pool) */
+            /* Header button secondary (Debug, Media Pool, rectangular) */
             QPushButton#headerButtonSecondary {{
                 background-color: #9CA3AF;
                 color: #FFFFFF;
@@ -539,22 +699,6 @@ class ClipABitApp(QWidget):
             }}
             QPushButton#headerButtonSecondary:hover {{
                 background-color: #7B8794;
-            }}
-
-            /* Compact info icon button */
-            QPushButton#infoIconButton {{
-                background-color: transparent;
-                color: {t['text_secondary']};
-                border: 1px solid {t['text_secondary']};
-                border-radius: 12px;
-                font-size: 12px;
-                font-weight: 700;
-                padding: 0;
-            }}
-            QPushButton#infoIconButton:hover {{
-                color: {t['text']};
-                border-color: {t['text']};
-                background-color: rgba(255, 255, 255, 0.08);
             }}
             
             /* Settings button */
@@ -730,12 +874,147 @@ class ClipABitApp(QWidget):
             QWidget#searchContent {{
                 background-color: {t['background']};
             }}
+            
+            /* Upload Section */
+            QWidget#uploadSection {{
+                background-color: transparent;
+            }}
+            
+            /* Upload Box with dashed border */
+            QFrame#uploadBox {{
+                background-color: {t['upload_box_bg']};
+                border: 3px dashed {t['upload_box_border']};
+                border-radius: 12px;
+                padding: 20px;
+            }}
+            
+            /* Upload icon */
+            QLabel#uploadIcon {{
+                font-size: 48px;
+                color: {t['upload_icon']};
+                padding: 10px;
+            }}
+            
+            /* Browse button */
+            QPushButton#browseButton {{
+                background-color: {t['accent']};
+                color: {t['button_text']};
+                border: none;
+                border-radius: 20px;
+                font-size: 14px;
+                font-weight: 600;
+            }}
+            QPushButton#browseButton:hover {{
+                background-color: {t['accent_hover']};
+            }}
+            
+            /* File count badge */
+            QLabel#fileCountBadge {{
+                color: {t['accent']};
+                font-size: 13px;
+                font-weight: 500;
+            }}
+            
+            /* Upload subtitle */
+            QLabel#uploadSubtitle {{
+                color: {t['text_secondary']};
+                font-size: 13px;
+            }}
+            
+            /* Info toggle button */
+            QPushButton#infoToggleButton {{
+                background-color: {t['card_bg']};
+                color: {t['text']};
+                border: 2px solid {t['border']};
+                border-radius: 12px;
+                font-size: 14px;
+                font-weight: bold;
+            }}
+            QPushButton#infoToggleButton:hover {{
+                background-color: {t['accent']};
+                color: {t['button_text']};
+                border-color: {t['accent']};
+            }}
+            QPushButton#infoToggleButton:checked {{
+                background-color: {t['accent']};
+                color: {t['button_text']};
+                border-color: {t['accent']};
+            }}
+            
+            /* Upload help container (overlay) */
+            QFrame#uploadHelpContainer {{
+                background-color: {t['card_bg']};
+                border: 2px solid {t['accent']};
+                border-radius: 12px;
+            }}
+            
+            /* Upload help text */
+            QLabel#uploadHelpText {{
+                color: {t['text']};
+                font-size: 13px;
+                line-height: 1.5;
+            }}
+            
+            /* Upload empty state */
+            QLabel#uploadEmptyState {{
+                color: {t['text_secondary']};
+                font-size: 14px;
+                padding: 20px;
+            }}
+            
+            /* Upload progress container */
+            QFrame#uploadProgressContainer {{
+                background-color: {t['card_bg']};
+                border: 1px solid {t['border']};
+                border-radius: 8px;
+            }}
+            
+            /* Progress item */
+            QFrame#progressItem {{
+                background-color: transparent;
+                border-bottom: 1px solid {t['border']};
+            }}
+            
+            /* Progress file name */
+            QLabel#progressFileName {{
+                color: {t['text']};
+                font-size: 13px;
+            }}
+            
+            /* Progress percentage */
+            QLabel#progressPercent {{
+                color: {t['text_secondary']};
+                font-size: 12px;
+            }}
+            
+            /* Upload progress bar */
+            QProgressBar#uploadProgressBar {{
+                background-color: rgba(217, 217, 217, 0.3);
+                border: none;
+                border-radius: 4px;
+            }}
+            QProgressBar#uploadProgressBar::chunk {{
+                background-color: {t['accent']};
+                border-radius: 4px;
+            }}
+            
+            /* Queued item */
+            QFrame#queuedItem {{
+                background-color: transparent;
+                border-bottom: 1px solid {t['border']};
+            }}
+            
+            /* Queued file name */
+            QLabel#queuedFileName {{
+                color: {t['text_secondary']};
+                font-size: 13px;
+            }}
         """)
     
     def _show_jobs_dialog(self):
-        """Show the active jobs/info dialog."""
+        """Show the Active Jobs/Debug dialog."""
         dialog = QDialog(self)
-        dialog.setWindowTitle("Info")
+        dialog.setWindowTitle("Active Jobs / Debug")
         dialog.setMinimumSize(500, 400)
         
         layout = QVBoxLayout()
@@ -753,10 +1032,10 @@ class ClipABitApp(QWidget):
         self._update_jobs_list_widget(self.dialog_jobs_list)
         layout.addWidget(self.dialog_jobs_list)
         
-        # Info section
-        info_title = QLabel("Info")
-        info_title.setStyleSheet("font-size: 18px; font-weight: bold;")
-        layout.addWidget(info_title)
+        # Debug section
+        debug_title = QLabel("Debug Info")
+        debug_title.setStyleSheet("font-size: 18px; font-weight: bold;")
+        layout.addWidget(debug_title)
         
         # Storage path
         storage_path = self._get_storage_path()
@@ -781,16 +1060,13 @@ class ClipABitApp(QWidget):
         layout.addWidget(close_btn)
         
         dialog.setLayout(layout)
-        try:
-            dialog.exec()
-        finally:
-            self.dialog_jobs_list = None
+        dialog.exec()
     
-    def _show_upload_dialog(self):
-        """Show the upload dialog with media pool actions."""
+    def _show_settings_dialog(self):
+        """Show the Settings dialog with upload controls."""
         dialog = QDialog(self)
-        dialog.setWindowTitle("Media Pool")
-        dialog.setMinimumSize(450, 320)
+        dialog.setWindowTitle("Settings")
+        dialog.setMinimumSize(450, 500)
         
         layout = QVBoxLayout()
         layout.setSpacing(15)
@@ -807,11 +1083,45 @@ class ClipABitApp(QWidget):
         self.dialog_file_status.setStyleSheet("color: #8E8E93;")
         layout.addWidget(self.dialog_file_status)
         
-        # Select files button
+        # Select Files button (white)
         btn_select = QPushButton("Select Files to Upload")
         btn_select.setStyleSheet("background-color: #FFFFFF; color: #000000;")
         btn_select.clicked.connect(lambda: self._select_files_to_upload_dialog(dialog))
         layout.addWidget(btn_select)
+        
+        # Divider
+        divider = QFrame()
+        divider.setFrameShape(QFrame.Shape.HLine)
+        divider.setStyleSheet("background-color: #4A4B52;")
+        layout.addWidget(divider)
+        
+        # Data Management section
+        data_title = QLabel("Data Management")
+        data_title.setStyleSheet("font-size: 18px; font-weight: bold;")
+        layout.addWidget(data_title)
+        
+        # Clear processed files button (white)
+        btn_clear = QPushButton("Clear Processed Files")
+        btn_clear.setStyleSheet("background-color: #FFFFFF; color: #000000;")
+        btn_clear.clicked.connect(self._clear_processed_files)
+        layout.addWidget(btn_clear)
+        
+        # Divider
+        divider2 = QFrame()
+        divider2.setFrameShape(QFrame.Shape.HLine)
+        divider2.setStyleSheet("background-color: #4A4B52;")
+        layout.addWidget(divider2)
+        
+        # Appearance section (last)
+        theme_title = QLabel("Appearance")
+        theme_title.setStyleSheet("font-size: 18px; font-weight: bold;")
+        layout.addWidget(theme_title)
+        
+        # Theme toggle (white)
+        theme_btn = QPushButton("Toggle Dark/Light Mode")
+        theme_btn.setStyleSheet("background-color: #FFFFFF; color: #000000;")
+        theme_btn.clicked.connect(self._toggle_theme)
+        layout.addWidget(theme_btn)
         
         # Spacer
         layout.addStretch()
@@ -822,10 +1132,15 @@ class ClipABitApp(QWidget):
         layout.addWidget(close_btn)
         
         dialog.setLayout(layout)
-        try:
-            dialog.exec()
-        finally:
-            self.dialog_file_status = None
+        dialog.exec()
+    
+    def _toggle_theme(self):
+        """Toggle between dark and light themes."""
+        if Theme.current == Theme.DARK:
+            Theme.current = Theme.LIGHT
+        else:
+            Theme.current = Theme.DARK
+        self._apply_theme()
     
     def _get_file_status_text(self):
         """Get the file status text for display."""
@@ -833,6 +1148,193 @@ class ClipABitApp(QWidget):
         processed = len(self.processed_files)
         new_files = total - processed
         return f"Total: {total} files | Processed: {processed} | New: {new_files}"
+    
+    def _get_empty_state_text(self):
+        """Get empty state message for search results area."""
+        return "no queries made yet."
+    
+    def _update_empty_state(self):
+        """Update empty state label with contextual message."""
+        if hasattr(self, 'empty_state_label') and self.empty_state_label.isVisible():
+            self.empty_state_label.setText(self._get_empty_state_text())
+    
+    def _update_file_count_badge(self):
+        """Update the file count badge in the upload section."""
+        if not hasattr(self, 'file_count_badge'):
+            return
+            
+        total = len(self.clip_map)
+        processed = len(self.processed_files)
+        new_files = total - processed
+        
+        if new_files > 0:
+            self.file_count_badge.setText(f"{new_files} new file{'s' if new_files > 1 else ''}")
+            self.file_count_badge.setVisible(True)
+        else:
+            self.file_count_badge.setVisible(False)
+    
+    def _get_upload_ui_state(self):
+        """Determine the current upload UI state based on media pool and upload status.
+        
+        Returns one of:
+        - "empty": No files in media pool
+        - "has_new": Has unprocessed files ready to upload
+        - "all_done": All files have been processed
+        - "uploading": Files are currently being uploaded
+        """
+        total = len(self.clip_map)
+        processed = len(self.processed_files)
+        new_files = total - processed
+        
+        if self.is_uploading or len(self.current_jobs) > 0:
+            return "uploading"
+        elif total == 0:
+            return "empty"
+        elif new_files > 0:
+            return "has_new"
+        else:
+            return "all_done"
+    
+    def _update_upload_section(self):
+        """Update the upload section UI based on current state."""
+        if not hasattr(self, 'upload_section'):
+            return
+            
+        state = self._get_upload_ui_state()
+        
+        # Update file count badge
+        self._update_file_count_badge()
+        
+        # Always hide the separate empty state label (we use subtitle instead)
+        self.upload_empty_state.setVisible(False)
+        
+        # Handle different states
+        if state == "uploading":
+            # Show progress alongside upload box
+            self.upload_box.setVisible(True)
+            self.upload_progress_container.setVisible(True)
+            self._update_progress_display()
+            self.upload_subtitle.setText("uploading...")
+        else:
+            # Show upload box, hide progress
+            self.upload_box.setVisible(True)
+            self.upload_progress_container.setVisible(False)
+            
+            # Update subtitle based on state
+            if state == "empty":
+                self.upload_subtitle.setText("Add files to your Media Pool to begin")
+            elif state == "has_new":
+                self.upload_subtitle.setText("drop a file here")
+            else:
+                self.upload_subtitle.setText("all files indexed")
+    
+    def _update_progress_display(self):
+        """Update the upload progress display with current job status."""
+        if not hasattr(self, 'upload_progress_container'):
+            return
+            
+        # Clear existing progress items
+        layout = self.upload_progress_container.layout()
+        while layout.count():
+            item = layout.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+        
+        # Add progress items for current jobs
+        for job_id, job_info in self.current_jobs.items():
+            progress_item = self._create_progress_item(job_id, job_info)
+            layout.addWidget(progress_item)
+        
+        # Add queued items
+        for filepath in list(self.upload_queue)[:5]:  # Show first 5 queued
+            queued_item = self._create_queued_item(filepath)
+            layout.addWidget(queued_item)
+        
+        # If no items, show a message
+        if layout.count() == 0:
+            no_items = QLabel("No uploads in progress")
+            no_items.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            no_items.setStyleSheet("color: #888; padding: 20px;")
+            layout.addWidget(no_items)
+    
+    def _create_progress_item(self, job_id, job_info):
+        """Create a progress item widget for a single upload job."""
+        item = QFrame()
+        item.setObjectName("progressItem")
+        
+        layout = QHBoxLayout()
+        layout.setContentsMargins(12, 8, 12, 8)
+        layout.setSpacing(12)
+        
+        # Filename
+        filename = job_info.get('filename', 'Unknown')
+        name_label = QLabel(filename)
+        name_label.setObjectName("progressFileName")
+        name_label.setMinimumWidth(150)
+        layout.addWidget(name_label)
+        
+        # Progress bar
+        from PyQt6.QtWidgets import QProgressBar
+        progress_bar = QProgressBar()
+        progress_bar.setObjectName("uploadProgressBar")
+        progress_bar.setMinimum(0)
+        progress_bar.setMaximum(100)
+        progress_bar.setValue(job_info.get('progress', 0))
+        progress_bar.setFixedHeight(8)
+        progress_bar.setTextVisible(False)
+        layout.addWidget(progress_bar, 1)
+        
+        # Percentage label
+        percent = job_info.get('progress', 0)
+        percent_label = QLabel(f"{percent}%")
+        percent_label.setObjectName("progressPercent")
+        percent_label.setFixedWidth(45)
+        layout.addWidget(percent_label)
+        
+        # Status indicator
+        status = job_info.get('status', 'processing')
+        status_label = QLabel()
+        status_label.setObjectName("progressStatus")
+        if status == 'complete':
+            status_label.setText("✓")
+            status_label.setStyleSheet("color: #4CAF50; font-size: 16px;")
+        elif status == 'error':
+            status_label.setText("✕")
+            status_label.setStyleSheet("color: #F44336; font-size: 16px;")
+        else:
+            status_label.setText("⋯")
+            status_label.setStyleSheet("color: #FAAF04; font-size: 16px;")
+        status_label.setFixedWidth(24)
+        layout.addWidget(status_label)
+        
+        item.setLayout(layout)
+        return item
+    
+    def _create_queued_item(self, filepath):
+        """Create a queued item widget for a file waiting to upload."""
+        from pathlib import Path
+        
+        item = QFrame()
+        item.setObjectName("queuedItem")
+        
+        layout = QHBoxLayout()
+        layout.setContentsMargins(12, 8, 12, 8)
+        layout.setSpacing(12)
+        
+        # Filename
+        filename = Path(filepath).name if filepath else 'Unknown'
+        name_label = QLabel(filename)
+        name_label.setObjectName("queuedFileName")
+        layout.addWidget(name_label, 1)
+        
+        # Status
+        status_label = QLabel("Queued")
+        status_label.setObjectName("queuedStatus")
+        status_label.setStyleSheet("color: #888; font-style: italic;")
+        layout.addWidget(status_label)
+        
+        item.setLayout(layout)
+        return item
     
     def _update_jobs_list_widget(self, list_widget):
         """Update a jobs list widget with current jobs."""
@@ -882,18 +1384,29 @@ class ClipABitApp(QWidget):
         new_count = len(set(new_files))
         queued_count = len(self.upload_queue)
         
-        # Update status text to include queue info
-        status_parts = [f"Files: {total_files} total, {processed_count} processed, {new_count} new"]
-        if queued_count > 0:
-            status_parts.append(f"{queued_count} queued")
+        # Build contextual status text
         if self.is_uploading:
-            status_parts.append("uploading...")
-            
-        status_text = ", ".join(status_parts)
+            status_text = f"Uploading... ({queued_count} queued)" if queued_count > 0 else "Uploading..."
+        elif queued_count > 0:
+            status_text = f"{queued_count} file{'s' if queued_count > 1 else ''} queued for upload"
+        elif new_count > 0:
+            status_text = f"{new_count} new file{'s' if new_count > 1 else ''} ready to upload"
+        elif total_files > 0:
+            status_text = f"{processed_count} file{'s' if processed_count > 1 else ''} indexed"
+        else:
+            status_text = "Ready"
         
         # Update status bar in new UI
         if hasattr(self, 'status_label') and self.status_label:
             self.status_label.setText(status_text)
+            
+            # Make clickable when new files exist (opens Media Pool dialog)
+            if new_count > 0 or queued_count > 0:
+                self.status_label.setCursor(Qt.CursorShape.PointingHandCursor)
+                self.status_label.mousePressEvent = lambda e: self._show_settings_dialog()
+            else:
+                self.status_label.setCursor(Qt.CursorShape.ArrowCursor)
+                self.status_label.mousePressEvent = lambda e: None
             
         # Update dialog status label if open
         try:
@@ -1113,6 +1626,7 @@ class ClipABitApp(QWidget):
         file_info = self.upload_queue.pop(0)
         self.current_upload = file_info
         self.is_uploading = True
+        self._update_upload_section()
         
         # Find and update the queued job to "processing" status
         temp_job_id = f"queued_{file_info['hash'][:8]}"
@@ -1237,6 +1751,8 @@ class ClipABitApp(QWidget):
                 del self.current_jobs[job_id]
                 self._update_jobs_display()
                 self._update_file_status()
+                self._update_empty_state()
+                self._update_upload_section()
                 
                 self.status_label.setText(f"Completed: {filename}")
                 print(f"✅ Job {job_id} completed successfully for {filename}")
@@ -1306,7 +1822,8 @@ class ClipABitApp(QWidget):
         """Handle completion of a single upload."""
         self.is_uploading = False
         self.current_upload = None
-        
+        self._update_upload_section()
+
         # Process next file in queue
         if self.upload_queue:
             QTimer.singleShot(Config.QUEUE_DELAY, self._process_upload_queue)
@@ -1325,12 +1842,8 @@ class ClipABitApp(QWidget):
                 self.jobs_list.addItem(f"{filename} - {status}")
         
         # Update dialog list if open
-        try:
-            if self.dialog_jobs_list is not None and self.dialog_jobs_list.isVisible():
-                self._update_jobs_list_widget(self.dialog_jobs_list)
-        except RuntimeError:
-            # Dialog closed and underlying C++ widget has been destroyed.
-            self.dialog_jobs_list = None
+        if hasattr(self, 'dialog_jobs_list') and self.dialog_jobs_list and self.dialog_jobs_list.isVisible():
+            self._update_jobs_list_widget(self.dialog_jobs_list)
     def _perform_search(self):
         """Perform semantic search."""
         query = self.search_input.text().strip()
@@ -1452,8 +1965,6 @@ class ClipABitApp(QWidget):
         thumbnail.setObjectName("thumbnail")
         thumbnail.setFixedHeight(140)
         thumbnail.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        # Avoid rich-text rendering for backend-provided metadata
-        thumbnail.setTextFormat(Qt.TextFormat.PlainText)
         display_name = f"{filename[:20]}..." if len(filename) > 20 else filename
         thumbnail.setText(f"{display_name}\n{start_time:.1f}s - {end_time:.1f}s")
         thumbnail.setStyleSheet(f"""
@@ -1494,8 +2005,6 @@ class ClipABitApp(QWidget):
         
         # Filename label
         name_label = QLabel(display_name)
-        # Avoid rich-text rendering for backend-provided metadata
-        name_label.setTextFormat(Qt.TextFormat.PlainText)
         name_label.setStyleSheet(f"color: {t['text']}; font-size: 12px; font-weight: 500; background: transparent;")
         btn_layout.addWidget(name_label)
         
@@ -1887,11 +2396,13 @@ class ClipABitApp(QWidget):
         """Refresh media pool and update file status."""
         if not resolve:
             return
-            
+
         self.clip_map = self._build_clip_map(debug=debug)
         if debug:
             print(f"[MediaPool] Refreshed clip map: {len(self.clip_map)} unique filenames")
         self._update_file_status()
+        self._update_empty_state()
+        self._update_upload_section()
         
     def _clear_upload_queue(self):
         """Clear the upload queue."""
