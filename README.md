@@ -12,7 +12,7 @@ A semantic video search plugin for DaVinci Resolve that allows you to search thr
 
 ## Prerequisites
 
-* **Python 3.12+**
+* **Python 3.11.12** (3.12+ not supported by Resolve)
 * **uv** (recommended) or pip
 * **DaVinci Resolve Studio** (paid version required for scripting support)
 
