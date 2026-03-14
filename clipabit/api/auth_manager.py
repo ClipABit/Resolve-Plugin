@@ -1,23 +1,141 @@
+import ctypes
+import ctypes.wintypes
 import json
 import os
 import secrets
 import hashlib
 import base64
+import sys
 import time
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from pathlib import Path
-from threading import Event, Lock, Thread
+from threading import Event, Lock
 from urllib.parse import parse_qs, urlparse, urlencode
 from typing import Callable, Optional, Tuple
 
-import keyring
 import requests
 import webbrowser
 
+try:
+    import keyring
+except ImportError:
+    keyring = None
+
 SERVICE_NAME = "clipabit-plugin"
 KEYRING_USERNAME = "tokens"
+_TOKEN_FILE = Path.home() / ".clipabit" / "tokens.dat"
 
 _RESOURCES_DIR = Path(__file__).parent / "resources"
+
+# --- Windows DPAPI helpers ---
+_IS_WINDOWS = sys.platform == "win32"
+
+if _IS_WINDOWS:
+    class _DATA_BLOB(ctypes.Structure):
+        _fields_ = [("cbData", ctypes.wintypes.DWORD),
+                     ("pbData", ctypes.POINTER(ctypes.c_char))]
+
+    _crypt32 = ctypes.windll.crypt32
+    _kernel32 = ctypes.windll.kernel32
+
+    def _dpapi_encrypt(plaintext: bytes) -> bytes:
+        """Encrypt bytes using Windows DPAPI (tied to current user)."""
+        blob_in = _DATA_BLOB(len(plaintext), ctypes.create_string_buffer(plaintext, len(plaintext)))
+        blob_out = _DATA_BLOB()
+        if not _crypt32.CryptProtectData(
+            ctypes.byref(blob_in), None, None, None, None, 0, ctypes.byref(blob_out)
+        ):
+            raise OSError("CryptProtectData failed")
+        encrypted = ctypes.string_at(blob_out.pbData, blob_out.cbData)
+        _kernel32.LocalFree(blob_out.pbData)
+        return encrypted
+
+    def _dpapi_decrypt(encrypted: bytes) -> bytes:
+        """Decrypt bytes using Windows DPAPI."""
+        blob_in = _DATA_BLOB(len(encrypted), ctypes.create_string_buffer(encrypted, len(encrypted)))
+        blob_out = _DATA_BLOB()
+        if not _crypt32.CryptUnprotectData(
+            ctypes.byref(blob_in), None, None, None, None, 0, ctypes.byref(blob_out)
+        ):
+            raise OSError("CryptUnprotectData failed")
+        decrypted = ctypes.string_at(blob_out.pbData, blob_out.cbData)
+        _kernel32.LocalFree(blob_out.pbData)
+        return decrypted
+
+
+def _save_tokens_to_storage(data: dict) -> None:
+    """Save token dict to platform-appropriate secure storage."""
+    json_bytes = json.dumps(data).encode("utf-8")
+
+    if _IS_WINDOWS:
+        # Windows: DPAPI-encrypted file
+        try:
+            encrypted = _dpapi_encrypt(json_bytes)
+            _TOKEN_FILE.parent.mkdir(parents=True, exist_ok=True)
+            _TOKEN_FILE.write_bytes(encrypted)
+            print(f"[Auth] Tokens saved (DPAPI-encrypted) to {_TOKEN_FILE}")
+            return
+        except Exception as e:
+            print(f"[Auth] DPAPI save failed: {e}")
+
+    # Mac/Linux: keyring
+    if keyring:
+        try:
+            keyring.set_password(SERVICE_NAME, KEYRING_USERNAME, json_bytes.decode("utf-8"))
+            print("[Auth] Tokens saved to keyring")
+            return
+        except Exception as e:
+            print(f"[Auth] Keyring save failed: {e}")
+
+    # Last resort: plaintext file
+    _TOKEN_FILE.parent.mkdir(parents=True, exist_ok=True)
+    _TOKEN_FILE.write_bytes(json_bytes)
+    print(f"[Auth] Tokens saved (unencrypted) to {_TOKEN_FILE}")
+
+
+def _load_tokens_from_storage() -> Optional[str]:
+    """Load token JSON string from platform-appropriate secure storage."""
+    if _IS_WINDOWS and _TOKEN_FILE.exists():
+        try:
+            encrypted = _TOKEN_FILE.read_bytes()
+            decrypted = _dpapi_decrypt(encrypted)
+            return decrypted.decode("utf-8")
+        except Exception as e:
+            print(f"[Auth] DPAPI load failed: {e}")
+            # Fall through to try other methods
+
+    if keyring:
+        try:
+            raw = keyring.get_password(SERVICE_NAME, KEYRING_USERNAME)
+            if raw:
+                return raw
+        except Exception:
+            pass
+
+    # Fallback: try reading file as plaintext (migration or non-Windows)
+    if _TOKEN_FILE.exists():
+        try:
+            raw = _TOKEN_FILE.read_bytes()
+            # Try to decode as UTF-8 (plaintext JSON)
+            return raw.decode("utf-8")
+        except Exception:
+            pass
+
+    return None
+
+
+def _delete_tokens_from_storage() -> None:
+    """Clear tokens from all storage locations."""
+    if keyring:
+        try:
+            keyring.delete_password(SERVICE_NAME, KEYRING_USERNAME)
+        except Exception:
+            pass
+    try:
+        if _TOKEN_FILE.exists():
+            _TOKEN_FILE.unlink()
+    except Exception:
+        pass
 
 
 class AuthManager:
@@ -125,16 +243,21 @@ class AuthManager:
                     self.send_header("Content-type", "text/html")
                     self.end_headers()
                     logo_svg = (_RESOURCES_DIR / "logo.svg").read_text(encoding="utf-8")
-                    # Treat state mismatch and missing code as callback errors.
-                    if error or not result["state_valid"] or not code:
-                        template = (_RESOURCES_DIR / "callback_error.html").read_text(encoding="utf-8")
+                    # Only show success/error when we have a terminal response (code or error).
+                    # Otherwise show a neutral waiting page so the user doesn't see "Login Failed"
+                    # while the flow may still be in progress.
+                    if has_terminal_auth_response:
+                        if error or not result["state_valid"] or not code:
+                            template = (_RESOURCES_DIR / "callback_error.html").read_text(encoding="utf-8")
+                        else:
+                            template = (_RESOURCES_DIR / "callback_success.html").read_text(encoding="utf-8")
                     else:
-                        template = (_RESOURCES_DIR / "callback_success.html").read_text(encoding="utf-8")
+                        template = (_RESOURCES_DIR / "callback_waiting.html").read_text(encoding="utf-8")
                     html = template.replace("LOGO_SVG_PLACEHOLDER", logo_svg).encode()
                     self.wfile.write(html)
-                    if state_valid and has_terminal_auth_response:
+                    if has_terminal_auth_response:
                         event.set()
-                    elif state_valid:
+                    else:
                         print("[Auth] Callback missing code/error; waiting for terminal callback")
                 else:
                     self.send_response(404)
@@ -155,17 +278,15 @@ class AuthManager:
                 print("[Auth] Unable to start local callback server for login flow")
                 raise
         port = server.server_address[1]
+        server.timeout = 0  # Non-blocking for handle_request()
 
-        thread = Thread(target=server.serve_forever, daemon=True)
-        thread.start()
-
-        def wait_for_callback(timeout: int = 300) -> Tuple[Optional[str], bool]:
+        def wait_for_callback(timeout: int = 0) -> Tuple[Optional[str], bool]:
             print(f"[Auth] Waiting for callback (timeout: {timeout}s)...")
             received = event.wait(timeout)
-            if not received:
+            if not received and timeout > 0:
                 print("[Auth] Timeout reached - no callback received")
                 print("[Auth] Login cancelled by user")
-            elif result["code"] is None:
+            elif result["code"] is None and event.is_set():
                 print("[Auth] Callback completed without authorization code")
                 if result.get("error"):
                     print(f"[Auth] Authorization error: {result['error']}")
@@ -174,12 +295,10 @@ class AuthManager:
                 if result.get("error_uri"):
                     print(f"[Auth] Authorization error uri: {result['error_uri']}")
             print("[Auth] Callback server shutting down")
-            server.shutdown()
             server.server_close()
-            thread.join()
             return result["code"], result["state_valid"]
 
-        return port, wait_for_callback
+        return port, wait_for_callback, event, result, server
 
     def initiate_login(self) -> Tuple[int, str, Callable[[int], Tuple[Optional[str], bool]]]:
         """
@@ -189,7 +308,7 @@ class AuthManager:
         verifier, challenge = self._generate_pkce_pair()
         state = self._generate_state()
 
-        port, wait_for_callback = self._start_callback_server(expected_state=state)
+        port, wait_for_callback, event, result_dict, server = self._start_callback_server(expected_state=state)
 
         print(f"[Auth] Callback server listening on port {port}")
 
@@ -215,7 +334,7 @@ class AuthManager:
 
         webbrowser.open(authorization_url)
 
-        return port, verifier, wait_for_callback
+        return port, verifier, wait_for_callback, event, result_dict, server
 
     def exchange_code_for_tokens(
         self, code: str, code_verifier: str, redirect_uri: str
@@ -266,25 +385,20 @@ class AuthManager:
         return data
 
     def _save_tokens(self, access_token: str, refresh_token: str, id_token: str, expires_at: float) -> None:
-        """Store tokens in keyring."""
-        print(f"[Auth] Saving tokens to keyring (service: {SERVICE_NAME})")
+        """Store tokens in secure platform storage."""
         data = {
             "access_token": access_token,
             "refresh_token": refresh_token,
             "id_token": id_token,
             "expires_at": expires_at,
         }
-        try:
-            keyring.set_password(SERVICE_NAME, KEYRING_USERNAME, json.dumps(data))
-            print("[Auth] Tokens saved successfully")
-        except Exception as e:
-            print(f"[Auth] Failed to save tokens to keyring: {e}")
-            print("[Auth] Keyring backend may be unavailable; tokens will not persist")
+        _save_tokens_to_storage(data)
 
-    def _load_tokens(self) -> Optional[dict]:
-        """Retrieve tokens from keyring. Returns dict or None."""
-        print("[Auth] Loading tokens from keyring...")
-        raw = keyring.get_password(SERVICE_NAME, KEYRING_USERNAME)
+    def _load_tokens(self, verbose: bool = False) -> Optional[dict]:
+        """Retrieve tokens from secure storage. Returns dict or None."""
+        if verbose:
+            print("[Auth] Loading tokens...")
+        raw = _load_tokens_from_storage()
         if not raw:
             return None
         try:
@@ -295,8 +409,8 @@ class AuthManager:
                 return None
             access = bool(data.get("access_token"))
             refresh = bool(data.get("refresh_token"))
-            print(f"[Auth] Tokens loaded: access={'yes' if access else 'no'}, refresh={'yes' if refresh else 'no'}")
-            # Require at least one of access_token or refresh_token to consider tokens valid
+            if verbose:
+                print(f"[Auth] Tokens loaded: access={'yes' if access else 'no'}, refresh={'yes' if refresh else 'no'}")
             if not (access or refresh):
                 print("[Auth] Token data missing access_token and refresh_token; clearing tokens")
                 self.delete_tokens()
@@ -320,12 +434,9 @@ class AuthManager:
             return False
 
     def delete_tokens(self) -> None:
-        """Clear tokens from keyring (logout)."""
-        print("[Auth] Clearing tokens from keyring...")
-        try:
-            keyring.delete_password(SERVICE_NAME, KEYRING_USERNAME)
-        except Exception:
-            pass  # No password stored or backend error
+        """Clear tokens from all storage."""
+        print("[Auth] Clearing tokens...")
+        _delete_tokens_from_storage()
 
     def _refresh_tokens(self, tokens: Optional[dict] = None) -> Optional[dict]:
         """Refresh access token using refresh_token. Returns new token data or None."""
@@ -392,7 +503,6 @@ class AuthManager:
                 else:
                     return None
 
-            print("[Auth] Returning valid access token")
             return access_token
 
     def execute_with_auth_retry(
