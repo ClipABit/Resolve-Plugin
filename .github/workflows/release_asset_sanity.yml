@@ -1,0 +1,80 @@
+name: release-asset-sanity
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version string to use for test packaging"
+        required: false
+        default: "0.0.0-ci"
+        type: string
+  push:
+    branches: [ staging, main ]
+    paths:
+      - ".github/workflows/release_asset_sanity.yml"
+      - ".github/workflows/semantic_release.yml"
+      - ".releaserc.json"
+      - "scripts/build_release_zip.py"
+      - "scripts/bump_version.py"
+      - "clipabit.py"
+      - "clipabit/**"
+  pull_request:
+    branches: [ staging, main ]
+    paths:
+      - ".github/workflows/release_asset_sanity.yml"
+      - ".github/workflows/semantic_release.yml"
+      - ".releaserc.json"
+      - "scripts/build_release_zip.py"
+      - "scripts/bump_version.py"
+      - "clipabit.py"
+      - "clipabit/**"
+
+permissions:
+  contents: read
+
+jobs:
+  package-check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      RELEASE_VERSION: ${{ inputs.version || '0.0.0-ci' }}
+    steps:
+      - name: checkout
+        uses: actions/checkout@v5
+
+      - name: setup python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: build release zips
+        run: python scripts/build_release_zip.py "$RELEASE_VERSION"
+
+      - name: list generated assets
+        run: ls -lah release
+
+      - name: verify generated assets
+        run: |
+          test -f release/clipabit.zip
+          test -f "release/clipabit-v${RELEASE_VERSION}.zip"
+
+      - name: inspect zip contents
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          from zipfile import ZipFile
+
+          release_dir = Path("release")
+          for zip_path in sorted(release_dir.glob("clipabit*.zip")):
+              print(f"Archive: {zip_path}")
+              with ZipFile(zip_path) as archive:
+                  for name in archive.namelist():
+                      print(f"  {name}")
+          PY
+
+      - name: upload release zips
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-zips-${{ env.RELEASE_VERSION }}
+          path: release/clipabit*.zip
+          if-no-files-found: error

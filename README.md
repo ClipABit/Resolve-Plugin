@@ -189,6 +189,11 @@ This watches the plugin source and syncs both:
 - It asks for **release type** (`patch`, `minor`, `major`).
 - It merges `staging` → `main`, then runs semantic-release on `main` with the chosen release type.
 
+### Release asset sanity check
+
+- Use GitHub Actions workflow **release-asset-sanity** to verify packaging independently of publishing.
+- It builds `clipabit.zip` and `clipabit-v<version>.zip`, lists them in the logs, inspects archive contents, and uploads them as workflow artifacts.
+
 ### Permissions probe
 
 - Run **Permissions Probe** workflow to verify whether `GITHUB_TOKEN` has write access.
