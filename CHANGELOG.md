@@ -2,6 +2,13 @@
 
 ### Bug Fixes
 
+* manual release trigger to fix staging release ([8772663](https://github.com/ClipABit/Resolve-Plugin/commit/8772663e83cd7a6cd19beb202da084231ea6efc5))
+* patches ui from crashing in davinci upon login ([8314010](https://github.com/ClipABit/Resolve-Plugin/commit/8314010386ab7d74824d4398c33454a4f7b1bf1f))
+
+## [1.1.1-staging.5](https://github.com/ClipABit/Resolve-Plugin/compare/v1.1.1-staging.4...v1.1.1-staging.5) (2026-03-15)
+
+### Bug Fixes
+
 * patches ui from crashing in davinci upon login ([8314010](https://github.com/ClipABit/Resolve-Plugin/commit/8314010386ab7d74824d4398c33454a4f7b1bf1f))
 
 ## [1.1.1-staging.5](https://github.com/ClipABit/Resolve-Plugin/compare/v1.1.1-staging.4...v1.1.1-staging.5) (2026-03-15)
