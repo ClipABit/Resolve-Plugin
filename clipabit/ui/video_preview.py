@@ -3,7 +3,7 @@ from typing import Dict, Optional
 
 from PyQt6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
-    QSlider, QWidget, QSizePolicy, QStyle,
+    QSlider, QWidget, QSizePolicy,
 )
 from PyQt6.QtCore import Qt, QUrl, QTimer, pyqtSignal
 from PyQt6.QtMultimedia import QMediaPlayer, QAudioOutput

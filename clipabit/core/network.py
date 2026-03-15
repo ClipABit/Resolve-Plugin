@@ -7,7 +7,7 @@ Works identically in standalone Python and inside DaVinci Resolve's fuscript.exe
 import json
 import os
 import traceback
-from typing import Optional, Callable, Dict
+from typing import Callable
 from urllib.parse import urlencode
 
 from PyQt6.QtCore import QObject, pyqtSignal, QUrl, QFile, QIODevice
@@ -37,7 +37,7 @@ class NetworkClient(QObject):
 
     # ── helpers ──────────────────────────────────────────────────────
 
-    def _build_url(self, base: str, params: Optional[Dict] = None) -> QUrl:
+    def _build_url(self, base: str, params: dict | None = None) -> QUrl:
         if params:
             return QUrl(f"{base}?{urlencode(params)}")
         return QUrl(base)
@@ -141,7 +141,10 @@ class NetworkClient(QObject):
                        on_progress: Callable = None):
         """Non-blocking multipart POST.  on_progress(bytes_sent, bytes_total)."""
         fn_display = filename or (os.path.basename(file_path) if file_path else "?")
-        file_size_mb = os.path.getsize(file_path) / (1024 * 1024) if file_path and os.path.exists(file_path) else 0
+        file_size_mb = (
+            os.path.getsize(file_path) / (1024 * 1024)
+            if file_path and os.path.exists(file_path) else 0
+        )
         print(f"[Network] POST multipart {fn_display} ({file_size_mb:.1f} MB, timeout={timeout}s)")
 
         def _do(retried=False):

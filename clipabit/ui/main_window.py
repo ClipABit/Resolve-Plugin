@@ -1,10 +1,11 @@
-import sys
+import datetime
+import hashlib
 import os
-import uuid
+import platform
+import sys
 import time
 import traceback
-import platform
-import hashlib
+import uuid
 from pathlib import Path
 from typing import Dict, List, Optional
 
@@ -348,7 +349,7 @@ class ClipABitApp(QWidget):
                 self._login_poll_timer.start(100)
             except Exception as e:
                 print(f"[Auth] Login error: {e}")
-                import traceback; traceback.print_exc()
+                traceback.print_exc()
                 QMessageBox.warning(self, "Login Error", str(e))
 
     def _poll_login_callback(self):
@@ -382,7 +383,7 @@ class ClipABitApp(QWidget):
         if success:
             if self.upload_queue and not self.is_uploading:
                 QTimer.singleShot(100, self._process_upload_queue)
-        elif message != "Login successful!":
+        else:
             QMessageBox.warning(self, "Login Failed", message)
 
     def _on_network_reauth(self):
@@ -456,6 +457,14 @@ class ClipABitApp(QWidget):
     def _on_search_text_changed(self, text):
         """Show/hide clear button based on search input text."""
         self.btn_clear_search.setVisible(bool(text))
+
+    def _build_namespace(self) -> str:
+        """Build the namespace string from device id and project name."""
+        user_id = self.get_or_create_device_id()
+        project_name = self.get_project_name() or "default"
+        user_id_safe = user_id.lower().replace(" ", "_")
+        project_safe = project_name.lower().replace(" ", "_")
+        return f"{user_id_safe}-{project_safe}"
 
     def _save_processed_files(self):
         save_processed_files(self.processed_files)
@@ -553,29 +562,6 @@ class ClipABitApp(QWidget):
                 color: {t['text']};
                 border-color: {t['text']};
                 background-color: rgba(255, 255, 255, 0.08);
-            }}
-            
-            /* Settings button */
-            QPushButton#settingsButton {{
-                background-color: transparent;
-                color: {t['text_secondary']};
-                border: none;
-                font-size: 20px;
-            }}
-            QPushButton#settingsButton:hover {{
-                color: {t['text']};
-            }}
-            
-            /* Close button (X) */
-            QPushButton#closeButton {{
-                background-color: transparent;
-                color: {t['close_button']};
-                border: none;
-                font-size: 18px;
-                font-weight: bold;
-            }}
-            QPushButton#closeButton:hover {{
-                color: {t['accent']};
             }}
             
             /* Main title */
@@ -838,7 +824,7 @@ class ClipABitApp(QWidget):
         if not self.current_jobs and not self.upload_queue:
             list_widget.addItem("No active jobs")
         else:
-            for job_id, job_info in self.current_jobs.items():
+            for _, job_info in self.current_jobs.items():
                 filename = job_info.get('filename', 'Unknown')
                 list_widget.addItem(f"Processing: {filename}")
             for file_info in self.upload_queue:
@@ -849,7 +835,7 @@ class ClipABitApp(QWidget):
         """Handle file selection from the settings dialog."""
         self._select_files_to_upload()
         # Update the dialog's file status
-        if hasattr(self, 'dialog_file_status'):
+        if self.dialog_file_status:
             self.dialog_file_status.setText(self._get_file_status_text())
 
     def _update_file_status(self):
@@ -890,13 +876,11 @@ class ClipABitApp(QWidget):
             
         status_text = ", ".join(status_parts)
         
-        # Update status bar in new UI
-        if hasattr(self, 'status_label') and self.status_label:
-            self.status_label.setText(status_text)
-            
+        self.status_label.setText(status_text)
+
         # Update dialog status label if open
         try:
-            if hasattr(self, 'dialog_file_status') and self.dialog_file_status is not None:
+            if self.dialog_file_status is not None:
                 # Check isVisible() might throw RuntimeError if underlying object is deleted
                 if self.dialog_file_status.isVisible():
                     self.dialog_file_status.setText(status_text)
@@ -1110,13 +1094,8 @@ class ClipABitApp(QWidget):
         filename = file_info['filename']
         self.status_label.setText(f"Starting upload: {filename} ({remaining} remaining)")
         
-        # Build namespace
-        user_id = self.get_or_create_device_id()
-        project_name = self.get_project_name() or "default"
-        user_id_safe = user_id.lower().replace(" ", "_")
-        project_safe = project_name.lower().replace(" ", "_")
-        namespace = f"{user_id_safe}-{project_safe}"
-        
+        namespace = self._build_namespace()
+
         # Start uploader (non-blocking — uses QNetworkAccessManager internally)
         self.current_uploader = FileUploader(file_info, namespace, network=self._network, parent=self)
         self.current_uploader.upload_started.connect(self._on_upload_started)
@@ -1279,12 +1258,7 @@ class ClipABitApp(QWidget):
         self._search_generation += 1  # Cancel any pending thumbnail loads from previous search
         gen = self._search_generation
 
-        # Build namespace from user_id and project_name (same as upload)
-        user_id = self.get_or_create_device_id()
-        project_name = self.get_project_name() or "default"
-        user_id_safe = user_id.lower().replace(" ", "_")
-        project_safe = project_name.lower().replace(" ", "_")
-        namespace = f"{user_id_safe}-{project_safe}"
+        namespace = self._build_namespace()
 
         if not self.auth_manager or not self.auth_manager.is_logged_in():
             QMessageBox.warning(self, "Sign In Required", "Please sign in to search.")
@@ -1331,8 +1305,7 @@ class ClipABitApp(QWidget):
                 self._clear_layout(item.layout())
                 
         # Hide empty state label
-        if hasattr(self, 'empty_state_label'):
-            self.empty_state_label.hide()
+        self.empty_state_label.hide()
                 
         if not results:
             no_results = QLabel("No results found for your query.")
@@ -2026,9 +1999,9 @@ class ClipABitApp(QWidget):
             scroll_layout = QVBoxLayout()
             
             # Display each processed file
-            for file_hash, file_info in sorted(self.processed_files.items(), 
-                                              key=lambda x: x[1].get('processed_at', 0), 
-                                              reverse=True):
+            for _, file_info in sorted(self.processed_files.items(),
+                                          key=lambda x: x[1].get('processed_at', 0),
+                                          reverse=True):
                 file_frame = QFrame()
                 file_frame.setFrameStyle(QFrame.Shape.Box)
                 file_layout = QVBoxLayout()
@@ -2040,7 +2013,6 @@ class ClipABitApp(QWidget):
                 
                 # Format timestamp
                 if processed_at:
-                    import datetime
                     dt = datetime.datetime.fromtimestamp(processed_at)
                     time_str = dt.strftime("%Y-%m-%d %H:%M:%S")
                 else:
@@ -2109,14 +2081,7 @@ class ClipABitApp(QWidget):
             for _, info in list(self.processed_files.items()):
                 filename = info.get("filename", "")
                 filepath = info.get("filepath", "")
-                namespace = info.get("namespace")
-                if not namespace:
-                    user_id = self.get_or_create_device_id()
-                    project_name = self.get_project_name() or "default"
-                    user_id_safe = user_id.lower().replace(" ", "_")
-                    project_safe = project_name.lower().replace(" ", "_")
-                    namespace = f"{user_id_safe}-{project_safe}"
-
+                namespace = info.get("namespace") or self._build_namespace()
                 hashed_identifier = info.get("hashed_identifier") or get_hashed_identifier(filepath, namespace, filename)
                 if filename and hashed_identifier:
                     self._delete_backend_entry(filename, hashed_identifier, namespace)
@@ -2131,14 +2096,7 @@ class ClipABitApp(QWidget):
             for _, info in list(self.processed_files.items()):
                 filename = info.get("filename", "")
                 filepath = info.get("filepath", "")
-                namespace = info.get("namespace")
-                if not namespace:
-                    user_id = self.get_or_create_device_id()
-                    project_name = self.get_project_name() or "default"
-                    user_id_safe = user_id.lower().replace(" ", "_")
-                    project_safe = project_name.lower().replace(" ", "_")
-                    namespace = f"{user_id_safe}-{project_safe}"
-
+                namespace = info.get("namespace") or self._build_namespace()
                 hashed_identifier = info.get("hashed_identifier") or get_hashed_identifier(filepath, namespace, filename)
                 if filename and hashed_identifier:
                     self._delete_backend_entry(filename, hashed_identifier, namespace)
@@ -2163,15 +2121,6 @@ class ClipABitApp(QWidget):
         for file_hash, info in list(self.processed_files.items()):
             filename = info.get("filename", "")
             filepath = info.get("filepath", "")
-            namespace = info.get("namespace")
-
-            if not namespace:
-                user_id = self.get_or_create_device_id()
-                project_name = self.get_project_name() or "default"
-                user_id_safe = user_id.lower().replace(" ", "_")
-                project_safe = project_name.lower().replace(" ", "_")
-                namespace = f"{user_id_safe}-{project_safe}"
-
 
             checked_count += 1
 
