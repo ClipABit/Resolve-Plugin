@@ -1,5 +1,5 @@
 import os
-from typing import Dict, Optional
+from typing import Dict
 
 from PyQt6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
@@ -494,7 +494,7 @@ def extract_thumbnail(file_path: str, time_s: float, size=(280, 140)):
     """Extract a thumbnail frame from a video file at the given timestamp.
     Returns a QPixmap or None if extraction fails."""
     from PyQt6.QtCore import QEventLoop, QSize
-    from PyQt6.QtGui import QImage, QPixmap
+    from PyQt6.QtGui import QPixmap
     from PyQt6.QtMultimedia import QMediaPlayer, QVideoSink, QVideoFrame
 
     if not file_path or not os.path.exists(file_path):
