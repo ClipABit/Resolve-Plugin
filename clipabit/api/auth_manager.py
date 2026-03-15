@@ -14,7 +14,6 @@ from urllib.parse import parse_qs, urlparse, urlencode
 from typing import Callable, Optional, Tuple
 
 import requests
-import webbrowser
 
 try:
     import keyring
