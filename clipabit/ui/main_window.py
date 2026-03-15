@@ -339,8 +339,15 @@ class ClipABitApp(QWidget):
             if getattr(self, "_login_poll_timer", None) and self._login_poll_timer.isActive():
                 return  # Already logging in
             try:
-                port, verifier, wait, event, result_dict, server = self.auth_manager.initiate_login()
-                print(f"[Auth] Browser opened, callback server on port {port}")
+                port, verifier, wait, event, result_dict, server, auth_url = self.auth_manager.initiate_login()
+                
+                msg_box = QMessageBox(self)
+                msg_box.setWindowTitle("Manual Authentication Required")
+                msg_box.setText("Please copy the URL below and paste it into your browser to sign in.")
+                msg_box.setInformativeText(auth_url)
+                msg_box.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+                msg_box.exec()
+
                 self.status_label.setText("Complete login in browser...")
                 self._login_state = {
                     "port": port,
