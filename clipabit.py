@@ -2,6 +2,8 @@ import sys
 import os
 import inspect
 
+from dotenv import load_dotenv
+
 # Resolve script path before load_dotenv so .env is found next to the script
 # (Resolve may run with CWD != script directory)
 try:
@@ -13,7 +15,6 @@ except NameError:
         script_path = os.path.abspath(".")
 current_dir = os.path.dirname(script_path)
 
-from dotenv import load_dotenv
 # Load .env from script directory and from Fusion/Modules (clean install)
 for dotenv_dir in (current_dir, os.path.abspath(os.path.join(current_dir, "..", "..", "Modules"))):
     env_path = os.path.join(dotenv_dir, ".env")
