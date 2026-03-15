@@ -300,11 +300,15 @@ class ClipABitApp(QWidget):
         self.get_started_content.setVisible(not is_logged_in)
         self.search_content.setVisible(is_logged_in)
         
-        # Hide header elements when not logged in
-        self.btn_auth.setVisible(is_logged_in)
+        # Ensure header elements remain visible regardless of login state
+        # so the 'Sign In' button is accessible.
+        self.btn_auth.setVisible(True)
+        self.logo_widget.setVisible(True)
+        
+        # Hide internal features when not logged in
         self.btn_media_pool.setVisible(is_logged_in)
         self.btn_jobs_debug.setVisible(is_logged_in)
-        self.logo_widget.setVisible(is_logged_in)
+
     
     def _create_header(self):
         """Create the header bar with logo and actions."""

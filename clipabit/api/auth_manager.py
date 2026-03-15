@@ -284,7 +284,12 @@ class AuthManager:
     def _load_tokens(self) -> Optional[dict]:
         """Retrieve tokens from keyring. Returns dict or None."""
         print("[Auth] Loading tokens from keyring...")
-        raw = keyring.get_password(SERVICE_NAME, KEYRING_USERNAME)
+        try:
+            raw = keyring.get_password(SERVICE_NAME, KEYRING_USERNAME)
+        except Exception as e:
+            print(f"[Auth] Failed to load tokens from keyring: {e}")
+            return None
+            
         if not raw:
             return None
         try:
@@ -316,7 +321,8 @@ class AuthManager:
             has_access = bool(tokens.get("access_token"))
             has_refresh = bool(tokens.get("refresh_token"))
             return has_access or has_refresh
-        except Exception:
+        except Exception as e:
+            print(f"[Auth] is_logged_in check failed: {e}")
             return False
 
     def delete_tokens(self) -> None:
@@ -324,7 +330,8 @@ class AuthManager:
         print("[Auth] Clearing tokens from keyring...")
         try:
             keyring.delete_password(SERVICE_NAME, KEYRING_USERNAME)
-        except Exception:
+        except Exception as e:
+            print(f"[Auth] Failed to delete tokens from keyring: {e}")
             pass  # No password stored or backend error
 
     def _refresh_tokens(self, tokens: Optional[dict] = None) -> Optional[dict]:
