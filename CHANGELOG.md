@@ -1,7 +1,5 @@
 ## [1.1.1-staging.6](https://github.com/ClipABit/Resolve-Plugin/compare/v1.1.1-staging.5...v1.1.1-staging.6) (2026-03-15)
 
-## [1.1.1-staging.6](https://github.com/ClipABit/Resolve-Plugin/compare/v1.1.1-staging.5...v1.1.1-staging.6) (2026-03-15)
-
 ## [1.1.1-staging.5](https://github.com/ClipABit/Resolve-Plugin/compare/v1.1.1-staging.4...v1.1.1-staging.5) (2026-03-15)
 
 ### Bug Fixes
