@@ -1,98 +1,106 @@
-from PyQt6.QtCore import QThread, pyqtSignal
-from typing import Optional
-import requests
 import os
-import time
 import traceback
+from PyQt6.QtCore import QObject, QTimer, pyqtSignal
 from ..api.config import Config
 
-class FileUploader(QThread):
-    """Background thread to handle file uploads without blocking the UI."""
-    
-    # Signals to communicate with Main Thread
+
+class FileUploader(QObject):
+    """Non-blocking file uploader using Qt's network stack.
+
+    Uses NetworkClient (QNetworkAccessManager) internally — the upload runs
+    entirely on the Qt event loop with no threads or subprocesses.
+    """
+
     upload_started = pyqtSignal(str)              # filename
     upload_success = pyqtSignal(str, str, dict)   # filename, file_hash, response_data
     upload_failed = pyqtSignal(str, str, str)     # filename, file_hash, error_message
     upload_progress = pyqtSignal(str, str)        # filename, status_message
-    
-    def __init__(self, file_info: dict, namespace: str, auth_manager=None, access_token: Optional[str] = None):
-        super().__init__()
+
+    MAX_RETRIES = 3
+
+    def __init__(self, file_info: dict, namespace: str, network=None, parent=None):
+        super().__init__(parent)
         self.file_info = file_info
         self.namespace = namespace
-        self.filepath = file_info['filepath']
-        self.filename = file_info['filename']
-        self.file_hash = file_info['hash']
-        self.auth_manager = auth_manager
-        self.access_token = access_token  # fallback if no auth_manager
-        
-    def run(self):
-        """Execute the upload logic."""
+        self.filepath = file_info["filepath"]
+        self.filename = file_info["filename"]
+        self.file_hash = file_info["hash"]
+        self._network = network
+        print(f"[Upload] FileUploader created: {self.filename} -> {namespace}")
+
+    def start(self):
+        """Begin the upload (returns immediately — non-blocking)."""
+        if not os.path.exists(self.filepath):
+            print(f"[Upload] File not found: {self.filepath}")
+            self.upload_failed.emit(
+                self.filename, self.file_hash, f"File not found: {self.filepath}"
+            )
+            return
+
+        file_size = os.path.getsize(self.filepath)
+        print(f"[Upload] Starting non-blocking upload: {self.filename} "
+              f"({file_size / (1024*1024):.1f} MB, hash={self.file_hash[:8]})")
         self.upload_started.emit(self.filename)
-        self._upload_with_retry()
-        
-    def _upload_with_retry(self, retry_count=0, max_retries=3):
-        """Internal upload logic with retries."""
-        try:
-            # File size check
-            if not os.path.exists(self.filepath):
-                self.upload_failed.emit(self.filename, self.file_hash, f"File not found: {self.filepath}")
-                return
+        self._upload(retry_count=0)
 
-            file_size = os.path.getsize(self.filepath)
-            file_size_mb = file_size / (1024 * 1024)
-            
-            # Prepare request
-            data = {"namespace": self.namespace}
-            
-            # Update status
-            msg = f"Uploading {self.filename}..." if retry_count == 0 else f"Uploading {self.filename} (attempt {retry_count + 1})..."
-            self.upload_progress.emit(self.filename, msg)
-            
-            # Session setup
-            session = requests.Session()
-            upload_timeout = min(600, max(60, int(file_size_mb * 60)))
+    def _upload(self, retry_count: int):
+        file_size = os.path.getsize(self.filepath)
+        file_size_mb = file_size / (1024 * 1024)
+        timeout = min(600, max(60, int(file_size_mb * 60)))
 
-            def make_upload_request(token):
-                headers = {}
-                if token:
-                    headers["Authorization"] = f"Bearer {token}"
-                    print("[Auth] Adding Bearer token to upload request")
-                fd = [("files", (self.filename, open(self.filepath, 'rb'), "video/mp4"))]
-                try:
-                    return session.post(
-                        Config.UPLOAD_API_URL,
-                        files=fd,
-                        data=data,
-                        headers=headers,
-                        timeout=upload_timeout,
-                    )
-                finally:
-                    fd[0][1][1].close()
+        label = f"Uploading {self.filename}..."
+        if retry_count > 0:
+            label += f" (attempt {retry_count + 1})"
+            print(f"[Upload] Retry {retry_count + 1}/{self.MAX_RETRIES} for {self.filename}")
+        self.upload_progress.emit(self.filename, label)
 
-            if self.auth_manager:
-                response = self.auth_manager.execute_with_auth_retry("upload", make_upload_request)
-            else:
-                token = self.access_token
-                response = make_upload_request(token)
-
-            if response.status_code == 200:
-                result = response.json()
-                job_id = result.get("job_id")
-                if job_id:
-                    self.upload_success.emit(self.filename, self.file_hash, result)
+        def on_success(status, data):
+            try:
+                if isinstance(data, dict) and data.get("job_id"):
+                    job_id = data["job_id"]
+                    print(f"[Upload] Success: {self.filename} -> job_id={job_id} (HTTP {status})")
+                    self.upload_success.emit(self.filename, self.file_hash, data)
                 else:
-                    self.upload_failed.emit(self.filename, self.file_hash, f"No job ID returned. Response: {result}")
-            else:
-                self.upload_failed.emit(self.filename, self.file_hash, f"HTTP {response.status_code}: {response.text}")
+                    print(f"[Upload] No job_id in response: {data}")
+                    self.upload_failed.emit(
+                        self.filename, self.file_hash, f"No job ID returned: {data}"
+                    )
+            except Exception as e:
+                print(f"[Upload] Error in success handler: {e}")
+                traceback.print_exc()
+                self.upload_failed.emit(self.filename, self.file_hash, str(e))
 
-        except (requests.exceptions.ConnectionError, requests.exceptions.Timeout) as e:
-            if retry_count < max_retries:
-                wait_time = (2 ** retry_count) * 2
-                self.upload_progress.emit(self.filename, f"Network error, retrying in {wait_time}s...")
-                time.sleep(wait_time)
-                self._upload_with_retry(retry_count + 1, max_retries)
+        def on_error(msg):
+            is_network = msg.startswith("Network error:")
+            print(f"[Upload] Error for {self.filename}: {msg[:200]} "
+                  f"(network={is_network}, retry={retry_count}/{self.MAX_RETRIES})")
+            if retry_count < self.MAX_RETRIES and is_network:
+                wait = (2 ** retry_count) * 2
+                print(f"[Upload] Will retry in {wait}s")
+                self.upload_progress.emit(
+                    self.filename, f"Network error, retrying in {wait}s..."
+                )
+                QTimer.singleShot(
+                    wait * 1000, lambda: self._upload(retry_count + 1)
+                )
             else:
-                self.upload_failed.emit(self.filename, self.file_hash, f"Network error after retries: {str(e)}")
-        except Exception as e:
-            self.upload_failed.emit(self.filename, self.file_hash, f"Unexpected error: {str(e)}")
-            print(traceback.format_exc())
+                print(f"[Upload] Giving up on {self.filename}")
+                self.upload_failed.emit(self.filename, self.file_hash, msg)
+
+        def on_progress(sent, total):
+            if total > 0:
+                pct = int(sent / total * 100)
+                self.upload_progress.emit(
+                    self.filename, f"Uploading {self.filename}... {pct}%"
+                )
+
+        self._network.post_multipart(
+            Config.UPLOAD_API_URL,
+            fields={"namespace": self.namespace},
+            file_path=self.filepath,
+            filename=self.filename,
+            timeout=timeout,
+            on_success=on_success,
+            on_error=on_error,
+            on_progress=on_progress,
+        )

@@ -4,7 +4,6 @@ import hashlib
 from pathlib import Path
 from typing import Dict
 
-import inspect
 
 def get_storage_path() -> Path:
     """Get path for local storage, robust to Resolve environment."""
@@ -13,6 +12,7 @@ def get_storage_path() -> Path:
         script_path = Path(__file__).resolve()
     except NameError:
         # Resolve 'script' environment
+        import inspect
         try:
             script_path = Path(inspect.getfile(inspect.currentframe())).resolve()
         except Exception:

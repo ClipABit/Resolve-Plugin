@@ -20,4 +20,10 @@ ENV/
 # OS
 .DS_Store
 Thumbs.db
+
+# Tool / editor config
 .cursor/
+.claude/
+
+# Local dev artifacts
+local/

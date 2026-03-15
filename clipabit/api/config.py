@@ -21,6 +21,10 @@ class Config:
         SERVER_BASE_URL = f"https://clipabit01--{ENVIRONMENT}-server-server-asgi-app.modal.run"
         SEARCH_BASE_URL = f"https://clipabit01--{ENVIRONMENT}-search-searchservice-asgi-app.modal.run"
     
+    # Allow env var overrides for custom dev servers
+    SERVER_BASE_URL = os.environ.get("CLIPABIT_SERVER_URL", SERVER_BASE_URL)
+    SEARCH_BASE_URL = os.environ.get("CLIPABIT_SEARCH_URL", SEARCH_BASE_URL)
+
     # API Endpoints - routes within the ASGI apps
     SEARCH_API_URL = f"{SEARCH_BASE_URL}/search"
     UPLOAD_API_URL = f"{SERVER_BASE_URL}/upload"
