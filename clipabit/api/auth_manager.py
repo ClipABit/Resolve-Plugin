@@ -412,8 +412,7 @@ class AuthManager:
                 return None
             access = bool(data.get("access_token"))
             refresh = bool(data.get("refresh_token"))
-            if verbose:
-                print(f"[Auth] Tokens loaded: access={'yes' if access else 'no'}, refresh={'yes' if refresh else 'no'}")
+            print(f"[Auth] Tokens loaded: access={'yes' if access else 'no'}, refresh={'yes' if refresh else 'no'}")
             if not (access or refresh):
                 print("[Auth] Token data missing access_token and refresh_token; clearing tokens")
                 self.delete_tokens()
