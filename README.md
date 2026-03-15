@@ -5,10 +5,11 @@ A semantic video search plugin for DaVinci Resolve that allows you to search thr
 ## Features
 
 - **Semantic Video Search**: Search your media pool using natural language (e.g., "woman walking", "car driving")
+- **Video Preview & Trim**: Preview search results with a built-in video player and trim in/out points before inserting
 - **Smart Upload Management**: Track which files have been processed and upload only new files
+- **Non-blocking Networking**: All HTTP I/O (upload, search, job polling) runs on Qt's event loop via `QNetworkAccessManager` — no threads, no UI freezes, fully compatible with Resolve's fuscript.exe
 - **Background Job Tracking**: Monitor upload and processing jobs with real-time status updates
 - **Timeline Integration**: Add search results directly to your timeline with precise timing
-- **Dark/Light Theme**: Modern UI with theme toggle support
 
 ## Prerequisites
 
@@ -143,20 +144,16 @@ This watches the plugin source and syncs both:
 ### Searching Videos
 
 1. Enter a natural language query in the search box (e.g., "person walking", "sunset scene")
-2. Click **Search** or press Enter
-3. Browse the results in the grid view
-4. Click **Add to timeline** on any result to insert it
+2. Press Enter to search
+3. Browse the results in the grid view (thumbnails load asynchronously)
+4. Click **Preview & Trim** on any result to open the video preview dialog
+5. Adjust the trim range with the dual-handle slider, then click **Insert to Timeline**
 
 ### Managing Uploads
 
-1. Click the **⚙** (settings) button in the top-right
-2. Select files to upload for processing
-3. Monitor progress via **Active Jobs/Debug** button
-
-### Theme Toggle
-
-1. Click **⚙** (settings) button
-2. Click **Toggle Dark/Light Mode**
+1. Click the **Media Pool** button in the header
+2. Click **Select Files to Upload** to choose clips from your media pool
+3. Monitor progress via the **i** (info) button in the header
 
 ## Configuration
 
@@ -222,10 +219,10 @@ This watches the plugin source and syncs both:
 .
 ├── clipabit.py          # Resolve shim / standalone entry point
 ├── clipabit/            # Main plugin package (sync to Fusion/Modules/clipabit)
-│   ├── api/             # Auth and backend API client/config
-│   ├── core/            # Upload/job/file utilities
-│   ├── ui/              # PyQt6 application UI
-│   └── assets/          # UI assets
+│   ├── api/             # Auth (PKCE login, token storage) and backend config
+│   ├── core/            # NetworkClient (QNAM), FileUploader, JobTracker, file utilities
+│   ├── ui/              # PyQt6 application UI (main window, video preview, theme)
+│   └── assets/          # UI assets (logos, icons)
 ├── watch_clipabit.py    # Development sync watcher (shim + package)
 ├── scripts/             # Release and auth utility scripts
 ├── pyproject.toml       # Project dependencies
@@ -235,7 +232,8 @@ This watches the plugin source and syncs both:
 
 ## Architecture
 
-- **PyQt6 Interface**: Modern, responsive UI with dark/light themes
+- **PyQt6 Interface**: Dark-themed UI with non-blocking networking via `QNetworkAccessManager`
+- **No Threads**: All HTTP calls (upload, search, job polling, delete) run on Qt's event loop — safe inside Resolve's fuscript.exe which crashes on `QThread.start()`
 - **Modal.com Backend**: Serverless video processing
 - **Pinecone Vector Database**: Semantic search with CLIP embeddings
 - **Cloudflare R2**: Video file storage

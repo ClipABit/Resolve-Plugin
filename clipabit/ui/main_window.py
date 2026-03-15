@@ -1,6 +1,5 @@
 import sys
 import os
-import requests
 import uuid
 import time
 import traceback
@@ -8,9 +7,6 @@ import platform
 import hashlib
 from pathlib import Path
 from typing import Dict, List, Optional
-
-# Detect if running inside DaVinci Resolve's script host
-_IS_FUSCRIPT = "fuscript" in os.path.basename(sys.executable).lower()
 
 try:
     from PyQt6.QtWidgets import (QApplication, QWidget, QVBoxLayout, QHBoxLayout,
@@ -31,12 +27,11 @@ from ..core.utils import (
     get_storage_path, load_processed_files, save_processed_files,
     get_file_hash, get_hashed_identifier
 )
+from ..core.network import NetworkClient
 from ..core.uploader import FileUploader
 from ..api.auth_manager import AuthManager
 from .theme import Theme
 from .video_preview import VideoPreviewDialog, extract_thumbnail
-
-
 
 # --- Setup Resolve API Globals ---
 resolve = None
@@ -75,7 +70,7 @@ class ClipABitApp(QWidget):
         
         # Initialize data
         self.clip_map = {}
-        self.processed_files = self._load_processed_files()
+        self.processed_files = load_processed_files()
         self.current_jobs = {}  # job_id -> job_info
         self._search_generation = 0  # Incremented on clear to cancel pending thumbnail loads
         self.dialog_jobs_list = None
@@ -93,31 +88,15 @@ class ClipABitApp(QWidget):
             print(f"[Auth] Configuration error: {e}")
             self.auth_manager = None
 
-        if self.auth_manager is not None:
-            def _do_reauth_prompt():
-                self._update_auth_button()
-                QMessageBox.warning(self, "Session Expired", "Please sign in again.")
+        # Shared non-blocking HTTP client (uses QNetworkAccessManager internally)
+        self._network = NetworkClient(auth_manager=self.auth_manager, parent=self)
+        self._network.reauth_required.connect(self._on_network_reauth)
 
-            self.auth_manager.on_reauth_required = lambda: QTimer.singleShot(0, self, _do_reauth_prompt)
-
-        def token_getter():
-            if self.auth_manager is None:
-                return None
-            return self.auth_manager.get_valid_access_token()
-        self._token_getter = token_getter
-
-        # Initialize job tracker
-        self.job_tracker = JobTracker(auth_manager=self.auth_manager)
+        # Initialize job tracker (QObject with internal QTimer — no threads)
+        self.job_tracker = JobTracker(network=self._network, parent=self)
         self.job_tracker.job_completed.connect(self._on_job_completed)
         self.job_tracker.job_failed.connect(self._on_job_failed)
-        if _IS_FUSCRIPT:
-            # fuscript.exe crashes on QThread.start() — use QTimer polling instead
-            print("[JobTracker] Using QTimer polling (fuscript mode)")
-            self._job_poll_timer = QTimer()
-            self._job_poll_timer.timeout.connect(self._poll_job_tracker)
-            self._job_poll_timer.start(int(Config.STATUS_CHECK_INTERVAL * 1000))
-        else:
-            self.job_tracker.start()
+        self.job_tracker.start()
         
         # Build clip map and check for new files (only if Resolve is available)
         if resolve:
@@ -406,42 +385,10 @@ class ClipABitApp(QWidget):
         elif message != "Login successful!":
             QMessageBox.warning(self, "Login Failed", message)
 
-    def _poll_job_tracker(self):
-        """Poll job status from main thread (fuscript fallback for QThread)."""
-        if not self.job_tracker.jobs_to_track:
-            return
-        jobs_to_remove = []
-        with self.job_tracker.lock:
-            current_jobs = dict(self.job_tracker.jobs_to_track)
-        for job_id in current_jobs:
-            try:
-                def make_request(token, _jid=job_id):
-                    headers = {"Authorization": f"Bearer {token}"} if token else {}
-                    return requests.get(
-                        Config.STATUS_API_URL,
-                        params={"job_id": _jid},
-                        headers=headers,
-                        timeout=Config.STATUS_CHECK_TIMEOUT,
-                    )
-                if self.auth_manager:
-                    response = self.auth_manager.execute_with_auth_retry("status", make_request)
-                else:
-                    response = make_request(None)
-                if response.status_code == 200:
-                    data = response.json()
-                    status = data.get("status", "processing")
-                    if status == "completed":
-                        self.job_tracker.job_completed.emit(job_id, data)
-                        jobs_to_remove.append(job_id)
-                    elif status == "failed":
-                        error = data.get("error", "Unknown error")
-                        self.job_tracker.job_failed.emit(job_id, error)
-                        jobs_to_remove.append(job_id)
-            except Exception as e:
-                print(f"[JobTracker] Error checking job {job_id}: {e}")
-        for job_id in jobs_to_remove:
-            with self.job_tracker.lock:
-                self.job_tracker.jobs_to_track.pop(job_id, None)
+    def _on_network_reauth(self):
+        """Handle re-authentication prompt from NetworkClient or AuthManager."""
+        self._update_auth_button()
+        QMessageBox.warning(self, "Session Expired", "Please sign in again.")
 
     def _create_search_bar(self):
         """Create the search bar matching Figma design."""
@@ -510,23 +457,10 @@ class ClipABitApp(QWidget):
         """Show/hide clear button based on search input text."""
         self.btn_clear_search.setVisible(bool(text))
 
-    # --- Utility Wrappers (Delegated to core.utils) ---
-    def _get_storage_path(self) -> Path:
-        return get_storage_path()
-        
-    def _load_processed_files(self) -> Dict[str, Dict]:
-        return load_processed_files()
-        
     def _save_processed_files(self):
         save_processed_files(self.processed_files)
-            
-    def _get_file_hash(self, filepath: str) -> str:
-        return get_file_hash(filepath)
 
-    def _get_hashed_identifier(self, filepath: str, namespace: str, filename: str) -> str:
-        return get_hashed_identifier(filepath, namespace, filename)
 
-    # --- Methods to FILL IN ---
     def _apply_theme(self):
         """Apply the current theme stylesheet matching Figma mockups."""
         t = Theme.current
@@ -823,7 +757,7 @@ class ClipABitApp(QWidget):
         layout.addWidget(info_title)
         
         # Storage path
-        storage_path = self._get_storage_path()
+        storage_path = get_storage_path()
         storage_label = QLabel(f"Storage: {storage_path}")
         storage_label.setWordWrap(True)
         storage_label.setStyleSheet("color: #8E8E93; font-size: 11px;")
@@ -917,6 +851,7 @@ class ClipABitApp(QWidget):
         # Update the dialog's file status
         if hasattr(self, 'dialog_file_status'):
             self.dialog_file_status.setText(self._get_file_status_text())
+
     def _update_file_status(self):
         """Update the file status display."""
         total_files = len(self.clip_map)
@@ -929,7 +864,7 @@ class ClipABitApp(QWidget):
                 for clip in clip_info:
                     filepath = clip.get('filepath')
                     if filepath:
-                        file_hash = self._get_file_hash(filepath)
+                        file_hash = get_file_hash(filepath)
                         if file_hash in self.processed_files:
                             processed_count += 1
                         else:
@@ -937,7 +872,7 @@ class ClipABitApp(QWidget):
             else:
                 filepath = clip_info.get('filepath')
                 if filepath:
-                    file_hash = self._get_file_hash(filepath)
+                    file_hash = get_file_hash(filepath)
                     if file_hash in self.processed_files:
                         processed_count += 1
                     else:
@@ -1001,7 +936,7 @@ class ClipABitApp(QWidget):
                 return
 
             filename = os.path.basename(filepath)
-            file_hash = self._get_file_hash(filepath)
+            file_hash = get_file_hash(filepath)
 
             if file_hash in self.processed_files:
                 skipped_processed += 1
@@ -1138,38 +1073,24 @@ class ClipABitApp(QWidget):
                 
         return False
         
-    def _check_if_file_exists_in_backend(self, filename: str, namespace: Optional[str] = None, hashed_identifier: Optional[str] = None) -> bool:
-        """Backend verification disabled: rely on local storage only."""
-        _ = (filename, namespace, hashed_identifier)
-        # print("[Verify] Backend verification disabled (local storage only).")
-        return False
-
     def _delete_backend_entry(self, filename: str, hashed_identifier: str, namespace: str):
-        """Request backend deletion for a file's Pinecone data."""
+        """Request backend deletion for a file's Pinecone data (non-blocking)."""
         if not self.auth_manager or not self.auth_manager.is_logged_in():
             return
-        try:
-            def make_request(token):
-                headers = {"Authorization": f"Bearer {token}"} if token else {}
-                if token:
-                    print("[Auth] Adding Bearer token to delete request")
-                return requests.delete(
-                    Config.DELETE_API_URL,
-                    params={"namespace": namespace, "hashed_identifier": hashed_identifier},
-                    headers=headers,
-                    timeout=10,
-                )
-            response = self.auth_manager.execute_with_auth_retry("delete", make_request)
-            if response.status_code not in (200, 204):
-                print(f"[Delete] Backend delete failed for {filename}: {response.status_code} {response.text}")
-        except Exception as e:
-            print(f"[Delete] Backend delete error for {filename}: {e}")
+        print(f"[Delete] Requesting backend delete for {filename}")
+        self._network.delete(
+            Config.DELETE_API_URL,
+            params={"namespace": namespace, "hashed_identifier": hashed_identifier},
+            timeout=10,
+            on_success=lambda status, data: print(f"[Delete] OK for {filename}: {status}"),
+            on_error=lambda msg: print(f"[Delete] Failed for {filename}: {msg}"),
+        )
             
     def _process_upload_queue(self):
         """Process the next file in the upload queue."""
         if not self.upload_queue or self.is_uploading:
             return
-        if not self._token_getter():
+        if not self.auth_manager or not self.auth_manager.get_valid_access_token():
             QMessageBox.warning(self, "Sign In Required", "Please sign in to upload.")
             return
             
@@ -1196,19 +1117,13 @@ class ClipABitApp(QWidget):
         project_safe = project_name.lower().replace(" ", "_")
         namespace = f"{user_id_safe}-{project_safe}"
         
-        # Start uploader
-        self.current_uploader_thread = FileUploader(file_info, namespace, auth_manager=self.auth_manager)
-        self.current_uploader_thread.upload_started.connect(self._on_upload_started)
-        self.current_uploader_thread.upload_progress.connect(self._on_upload_progress)
-        self.current_uploader_thread.upload_success.connect(self._on_upload_success)
-        self.current_uploader_thread.upload_failed.connect(self._on_upload_error)
-        if _IS_FUSCRIPT:
-            # fuscript.exe crashes on QThread.start() — run synchronously
-            print(f"[Upload] Running synchronously (fuscript) for {filename}")
-            self.current_uploader_thread.run()
-        else:
-            self.current_uploader_thread.finished.connect(self.current_uploader_thread.deleteLater)
-            self.current_uploader_thread.start()
+        # Start uploader (non-blocking — uses QNetworkAccessManager internally)
+        self.current_uploader = FileUploader(file_info, namespace, network=self._network, parent=self)
+        self.current_uploader.upload_started.connect(self._on_upload_started)
+        self.current_uploader.upload_progress.connect(self._on_upload_progress)
+        self.current_uploader.upload_success.connect(self._on_upload_success)
+        self.current_uploader.upload_failed.connect(self._on_upload_error)
+        self.current_uploader.start()
 
     def _on_upload_started(self, filename: str):
         """Handle upload start."""
@@ -1219,10 +1134,10 @@ class ClipABitApp(QWidget):
         self.status_label.setText(msg)
 
     def _on_upload_success(self, filename: str, file_hash: str, result: dict):
-        """Handle successful upload from background thread."""
+        """Handle successful upload."""
         try:
             job_id = result.get("job_id")
-            print(f"[Upload] ✅ Upload successful, job_id: {job_id}")
+            print(f"[Upload] Upload successful, job_id: {job_id}")
             
             # Cleanup temp job
             temp_job_id = f"queued_{file_hash[:8]}"
@@ -1231,7 +1146,7 @@ class ClipABitApp(QWidget):
                 
             # Create real job entry
             filepath = self.current_upload['filepath'] if self.current_upload else ""
-            namespace = self.current_uploader_thread.namespace if hasattr(self, 'current_uploader_thread') else ""
+            namespace = self.current_uploader.namespace if hasattr(self, 'current_uploader') else ""
             
             job_info = {
                 'filename': filename,
@@ -1257,8 +1172,8 @@ class ClipABitApp(QWidget):
             self._on_upload_completed(False)
 
     def _on_upload_error(self, filename: str, file_hash: str, error_msg: str):
-        """Handle upload failure from background thread."""
-        print(f"[Upload] ❌ Error: {error_msg}")
+        """Handle upload failure."""
+        print(f"[Upload] Error: {error_msg}")
         
         temp_job_id = f"queued_{file_hash[:8]}"
         if temp_job_id in self.current_jobs:
@@ -1278,7 +1193,7 @@ class ClipABitApp(QWidget):
                 filepath = job_info['filepath']
                 file_hash = job_info['file_hash']
                 namespace = job_info['namespace']
-                hashed_identifier = self._get_hashed_identifier(filepath, namespace, filename)
+                hashed_identifier = get_hashed_identifier(filepath, namespace, filename)
                 expected_vectors = None
                 try:
                     if isinstance(result, dict) and result.get("chunks") is not None:
@@ -1308,7 +1223,7 @@ class ClipABitApp(QWidget):
                 self._update_file_status()
                 
                 self.status_label.setText(f"Completed: {filename}")
-                print(f"✅ Job {job_id} completed successfully for {filename}")
+                print(f"[Job] Job {job_id} completed for {filename}")
                 
                 # Continue with next upload in queue
                 self._on_upload_completed(True)
@@ -1324,51 +1239,15 @@ class ClipABitApp(QWidget):
         if job_id in self.current_jobs:
             job_info = self.current_jobs[job_id]
             filename = job_info['filename']
-            file_hash = job_info['file_hash']
-            
-            print(f"❌ Job {job_id} failed for {filename}: {error}")
-            
-            # Before marking as failed, check if file actually exists in backend
-            # (in case job tracking failed but processing succeeded)
-            namespace = job_info.get('namespace')
-            if self._check_if_file_exists_in_backend(
-                filename,
-                namespace=namespace,
-                hashed_identifier=self._get_hashed_identifier(job_info.get('filepath', ''), namespace or "", filename)
-            ):
-                print(f"🔄 Job failed but file {filename} found in backend - marking as completed")
-                
-                # Mark as processed since it's actually in the backend
-                self.processed_files[file_hash] = {
-                    'filename': filename,
-                    'filepath': job_info.get('filepath', ''),
-                    'job_id': job_id,
-                    'namespace': namespace,
-                    'hashed_identifier': self._get_hashed_identifier(job_info.get('filepath', ''), namespace or "", filename),
-                    'processed_at': time.time(),
-                    'result': {'status': 'recovered_from_backend', 'error': error}
-                }
-                self._save_processed_files()
-                
-                # Remove from current jobs
-                del self.current_jobs[job_id]
-                self._update_jobs_display()
-                self._update_file_status()
-                
-                self.status_label.setText(f"Recovered: {filename} (found in backend)")
-                
-                # Continue with next upload
-                self._on_upload_completed(True)
-                return
-            
-            # Actually failed - remove from current jobs
+
+            print(f"[Job] Job {job_id} failed for {filename}: {error}")
+
             del self.current_jobs[job_id]
             self._update_jobs_display()
-            
+
             self.status_label.setText(f"Failed: {filename}")
             QMessageBox.warning(self, "Upload Failed", f"Processing failed for {filename}:\n{error}")
-            
-            # Continue with next upload in queue even if this one failed
+
             self._on_upload_completed(False)
             
     def _on_upload_completed(self, success: bool):
@@ -1384,66 +1263,61 @@ class ClipABitApp(QWidget):
             self._update_file_status()
             
     def _update_jobs_display(self):
-        """Update the jobs list display."""
-        # Update main job list (if exists in legacy UI, usually replaced by dialog)
-        if hasattr(self, 'jobs_list') and self.jobs_list:
-            self.jobs_list.clear()
-            for job_id, job_info in self.current_jobs.items():
-                filename = job_info['filename']
-                status = job_info.get('status', 'processing')
-                self.jobs_list.addItem(f"{filename} - {status}")
-        
-        # Update dialog list if open
+        """Update the jobs list dialog if open."""
         try:
             if self.dialog_jobs_list is not None and self.dialog_jobs_list.isVisible():
                 self._update_jobs_list_widget(self.dialog_jobs_list)
         except RuntimeError:
             # Dialog closed and underlying C++ widget has been destroyed.
             self.dialog_jobs_list = None
+
     def _perform_search(self):
-        """Perform semantic search."""
+        """Perform semantic search (non-blocking)."""
         query = self.search_input.text().strip()
         if not query:
             return
         self._search_generation += 1  # Cancel any pending thumbnail loads from previous search
-            
+        gen = self._search_generation
+
         # Build namespace from user_id and project_name (same as upload)
         user_id = self.get_or_create_device_id()
         project_name = self.get_project_name() or "default"
         user_id_safe = user_id.lower().replace(" ", "_")
         project_safe = project_name.lower().replace(" ", "_")
         namespace = f"{user_id_safe}-{project_safe}"
-        
+
         if not self.auth_manager or not self.auth_manager.is_logged_in():
             QMessageBox.warning(self, "Sign In Required", "Please sign in to search.")
             return
-        
+
         self.status_label.setText(f"Searching for: {query}")
         self.btn_search.setEnabled(False)
-        
-        try:
-            params = {"query": query, "namespace": namespace}
-            def make_request(token):
-                headers = {"Authorization": f"Bearer {token}"} if token else {}
-                if token:
-                    print("[Auth] Adding Bearer token to search request")
-                return requests.get(Config.SEARCH_API_URL, params=params, headers=headers, timeout=30)
-            response = self.auth_manager.execute_with_auth_retry("search", make_request)
-            
-            if response.status_code == 200:
-                result = response.json()
-                results = result.get("results", [])
-                self._display_search_results(results, query)
-                self.status_label.setText(f"Found {len(results)} results for: {query}")
-            else:
-                QMessageBox.warning(self, "Search Error", f"Search failed: {response.status_code}\n{response.text}")
-                self.status_label.setText("Search failed")
-                
-        except Exception as e:
-            QMessageBox.critical(self, "Error", f"Search failed: {str(e)}")
-            self.status_label.setText("Search error")
-        finally:
+        print(f"[Search] Sending async search: query={query!r}, namespace={namespace}")
+
+        def on_success(status, data):
+            if gen != self._search_generation:
+                print("[Search] Stale result discarded")
+                return
+            results = data.get("results", []) if isinstance(data, dict) else []
+            self._display_search_results(results, query)
+            self.status_label.setText(f"Found {len(results)} results for: {query}")
             self.btn_search.setEnabled(True)
+
+        def on_error(msg):
+            if gen != self._search_generation:
+                return
+            print(f"[Search] Error: {msg}")
+            QMessageBox.warning(self, "Search Error", f"Search failed: {msg}")
+            self.status_label.setText("Search failed")
+            self.btn_search.setEnabled(True)
+
+        self._network.get(
+            Config.SEARCH_API_URL,
+            params={"query": query, "namespace": namespace},
+            timeout=30,
+            on_success=on_success,
+            on_error=on_error,
+        )
             
     def _display_search_results(self, results: List[Dict], query: str):
         """Display search results in a grid layout matching Figma design."""
@@ -1643,6 +1517,7 @@ class ClipABitApp(QWidget):
         dialog = VideoPreviewDialog(result, parent=self)
         dialog.insert_requested.connect(self._add_result_to_timeline)
         dialog.exec()
+
     def _add_result_to_timeline(self, result: Dict):
         """Add a search result to the timeline."""
         if not resolve:
@@ -1905,6 +1780,7 @@ class ClipABitApp(QWidget):
 
         print("Created new empty timeline.")
         return True
+
     def _extract_clip_fps(self, clip):
         """Try to read a clip's frame rate from common clip properties.
 
@@ -2241,7 +2117,7 @@ class ClipABitApp(QWidget):
                     project_safe = project_name.lower().replace(" ", "_")
                     namespace = f"{user_id_safe}-{project_safe}"
 
-                hashed_identifier = info.get("hashed_identifier") or self._get_hashed_identifier(filepath, namespace, filename)
+                hashed_identifier = info.get("hashed_identifier") or get_hashed_identifier(filepath, namespace, filename)
                 if filename and hashed_identifier:
                     self._delete_backend_entry(filename, hashed_identifier, namespace)
 
@@ -2263,7 +2139,7 @@ class ClipABitApp(QWidget):
                     project_safe = project_name.lower().replace(" ", "_")
                     namespace = f"{user_id_safe}-{project_safe}"
 
-                hashed_identifier = info.get("hashed_identifier") or self._get_hashed_identifier(filepath, namespace, filename)
+                hashed_identifier = info.get("hashed_identifier") or get_hashed_identifier(filepath, namespace, filename)
                 if filename and hashed_identifier:
                     self._delete_backend_entry(filename, hashed_identifier, namespace)
 
@@ -2274,14 +2150,6 @@ class ClipABitApp(QWidget):
             )
             print("Pinecone data deleted; local tracking kept")
             
-    def _verify_backend_records(self):
-        """Manually verify backend vector counts for processed files."""
-        QMessageBox.information(
-            self,
-            "Verify Backend",
-            "Backend verification is disabled. Using local storage only."
-        )
-
     def _run_consistency_check(self, reason: str):
         """Sync local tracking with backend and remove dangling entries."""
         if not self.processed_files:
@@ -2329,7 +2197,6 @@ class ClipABitApp(QWidget):
         """Handle window close event."""
         if hasattr(self, 'job_tracker'):
             self.job_tracker.stop()
-            self.job_tracker.wait()
         if hasattr(self, 'refresh_timer'):
             self.refresh_timer.stop()
         event.accept()

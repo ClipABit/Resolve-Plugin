@@ -162,7 +162,6 @@ class AuthManager:
                 f"Missing required environment variable(s): {', '.join(missing)}"
             )
 
-        self.on_reauth_required: Optional[Callable[[], None]] = None
         self._token_lock = Lock()
         self._debug_auth = os.environ.get("CLIPABIT_AUTH_DEBUG", "").lower() in {
             "1",
@@ -505,37 +504,6 @@ class AuthManager:
 
             return access_token
 
-    def execute_with_auth_retry(
-        self, endpoint: str, make_request: Callable[[Optional[str]], requests.Response]
-    ) -> requests.Response:
-        """
-        Execute a request with 401 retry. On 401: refresh once, retry. If still 401, clear tokens and call on_reauth_required.
-        """
-        token = self.get_valid_access_token()
-        resp = make_request(token)
-        if resp.status_code != 401:
-            return resp
-
-        print(f"[Auth] Received 401 from {endpoint}")
-        print("[Auth] Attempting token refresh...")
-        refreshed = self._refresh_tokens()
-        if not refreshed:
-            print("[Auth] Refresh failed - prompting re-login")
-            self.delete_tokens()
-            if self.on_reauth_required:
-                self.on_reauth_required()
-            return resp
-
-        new_token = refreshed.get("access_token")
-        print("[Auth] Retrying request with new token...")
-        resp2 = make_request(new_token)
-        if resp2.status_code == 401:
-            print("[Auth] Refresh failed - prompting re-login")
-            self.delete_tokens()
-            if self.on_reauth_required:
-                self.on_reauth_required()
-        return resp2
-
 
 if __name__ == "__main__":
     import sys
@@ -548,7 +516,7 @@ if __name__ == "__main__":
         token = mgr.get_valid_access_token()
         print(f"[Auth] get_valid_access_token: {'present' if token else None}")
     else:
-        port, verifier, wait = mgr.initiate_login()
+        port, verifier, wait, event, result_dict, server = mgr.initiate_login()
         redirect_uri = f"http://127.0.0.1:{port}/callback"
         code, ok = wait(timeout=300)  # ~5 min
         print(f"[Auth] Result: code={'...' if code else None}, state_valid={ok}")
