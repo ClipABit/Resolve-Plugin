@@ -174,7 +174,7 @@ class ClipABitApp(QWidget):
         center_layout.setSpacing(12)
 
         # Large logo for landing page
-        logo_path = Path(__file__).parent.parent / "assets" / "logo-dark.svg"
+        logo_path = Path(__file__).parent.parent.parent / "assets" / "logo-dark.svg"
         if logo_path.exists():
             self.landing_logo = QSvgWidget(str(logo_path))
             self.landing_logo.setFixedSize(260, 120)
@@ -255,11 +255,15 @@ class ClipABitApp(QWidget):
         self.get_started_content.setVisible(not is_logged_in)
         self.search_content.setVisible(is_logged_in)
         
-        # Hide header elements when not logged in
-        self.btn_auth.setVisible(is_logged_in)
+        # Ensure header elements remain visible regardless of login state
+        # so the 'Sign In' button is accessible.
+        self.btn_auth.setVisible(True)
+        self.logo_widget.setVisible(True)
+        
+        # Hide internal features when not logged in
         self.btn_media_pool.setVisible(is_logged_in)
         self.btn_jobs_debug.setVisible(is_logged_in)
-        self.logo_widget.setVisible(is_logged_in)
+
     
     def _create_header(self):
         """Create the header bar with logo and actions."""
