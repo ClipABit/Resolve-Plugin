@@ -26,10 +26,15 @@
             "release": "patch"
           },
           {
-            "release": "patch"
+            "type": "chore",
+            "release": false
+          },
+          {
+            "scope": "release",
+            "release": false
           }
         ],
-        "defaultReleaseType": "patch"
+        "defaultReleaseType": false
       }
     ],
     [
