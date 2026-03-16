@@ -28,6 +28,7 @@ _TOKEN_FILE = Path.home() / ".clipabit" / "tokens.dat"
 _RESOURCES_DIR = Path(__file__).parent / "resources"
 
 # --- Windows DPAPI helpers ---
+# TODO: Move this into a class or separate module if it grows, and add better error handling and fallback logic.
 _IS_WINDOWS = sys.platform == "win32"
 
 if _IS_WINDOWS:
@@ -242,6 +243,7 @@ class AuthManager:
                     self.send_header("Content-type", "text/html")
                     self.end_headers()
                     logo_svg = (_RESOURCES_DIR / "logo.svg").read_text(encoding="utf-8")
+                    
                     # Only show success/error when we have a terminal response (code or error).
                     # Otherwise show a neutral waiting page so the user doesn't see "Login Failed"
                     # while the flow may still be in progress.

@@ -263,6 +263,8 @@ class ClipABitApp(QWidget):
         # Hide internal features when not logged in
         self.btn_media_pool.setVisible(is_logged_in)
         self.btn_jobs_debug.setVisible(is_logged_in)
+        self.btn_auth.setVisible(is_logged_in)
+        self.logo_widget.setVisible(is_logged_in)
 
     
     def _create_header(self):
