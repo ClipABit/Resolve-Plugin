@@ -31,3 +31,6 @@ Thumbs.db
 
 # Local dev artifacts
 local/
+
+# Build artifacts
+dist/
