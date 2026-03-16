@@ -180,11 +180,13 @@ This watches the plugin source and syncs both:
 - Pushes to `staging` run semantic-release automatically.
 - Tags are created as `vX.Y.Z-staging.N`.
 - `CHANGELOG.md` and `pyproject.toml` are updated.
+- Each published GitHub release includes a versioned zip asset with install-ready `Scripts/Utility/ClipABit.py` and `Modules/clipabit/` contents.
 
 ### Promote to main (manual trigger)
 - Use GitHub Actions workflow **Promote staging to main**.
 - It asks for **release type** (`patch`, `minor`, `major`).
 - It merges `staging` → `main`, then runs semantic-release on `main` with the chosen release type.
+- The resulting GitHub release also uploads `clipabit-plugin-<version>.zip` under the release assets.
 
 ### Permissions probe
 - Run **Permissions Probe** workflow to verify whether `GITHUB_TOKEN` has write access.
