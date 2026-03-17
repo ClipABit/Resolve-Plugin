@@ -1,3 +1,9 @@
+## [1.2.0-staging.2](https://github.com/ClipABit/Resolve-Plugin/compare/v1.2.0-staging.1...v1.2.0-staging.2) (2026-03-17)
+
+### Bug Fixes
+
+* plugin automatically opens browser ([#37](https://github.com/ClipABit/Resolve-Plugin/issues/37)) ([b7dc570](https://github.com/ClipABit/Resolve-Plugin/commit/b7dc5703e0c7df3b132b2f210a7ee0f1cd99b0a5))
+
 ## [1.2.0-staging.1](https://github.com/ClipABit/Resolve-Plugin/compare/v1.1.1-staging.5...v1.2.0-staging.1) (2026-03-16)
 
 ### Features
