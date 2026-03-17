@@ -14,7 +14,11 @@ from urllib.parse import parse_qs, urlparse, urlencode
 from typing import Callable, Optional, Tuple
 
 import requests
-import webbrowser
+
+try:
+    import keyring
+except ImportError:
+    keyring = None
 
 try:
     import keyring
@@ -299,10 +303,10 @@ class AuthManager:
 
         return port, wait_for_callback, event, result, server
 
-    def initiate_login(self) -> Tuple[int, str, Callable[[int], Tuple[Optional[str], bool]]]:
+    def initiate_login(self):
         """
-        Start login flow: generate PKCE, start callback server, open browser to Auth0.
-        Returns (port, code_verifier, wait_for_callback) for token exchange.
+        Start login flow: generate PKCE, start callback server.
+        Returns (port, verifier, wait_for_callback, event, result_dict, server, authorization_url).
         """
         verifier, challenge = self._generate_pkce_pair()
         state = self._generate_state()
@@ -326,14 +330,11 @@ class AuthManager:
             f"https://{self.AUTH0_DOMAIN}/authorize?{urlencode(params)}"
         )
 
-        print("[Auth] Opening browser to Auth0...")
         print("[Auth] Authorization URL prepared")
         if self._debug_auth:
             print(f"[Auth] Authorization URL: {authorization_url}")
 
-        webbrowser.open(authorization_url)
-
-        return port, verifier, wait_for_callback, event, result_dict, server
+        return port, verifier, wait_for_callback, event, result_dict, server, authorization_url
 
     def exchange_code_for_tokens(
         self, code: str, code_verifier: str, redirect_uri: str
@@ -524,7 +525,8 @@ if __name__ == "__main__":
         token = mgr.get_valid_access_token()
         print(f"[Auth] get_valid_access_token: {'present' if token else None}")
     else:
-        port, verifier, wait, event, result_dict, server = mgr.initiate_login()
+        port, verifier, wait, event, result_dict, server, auth_url = mgr.initiate_login()
+        print(f"[Auth] Please open this URL in your browser to log in:\n{auth_url}")
         redirect_uri = f"http://127.0.0.1:{port}/callback"
         code, ok = wait(timeout=300)  # ~5 min
         print(f"[Auth] Result: code={'...' if code else None}, state_valid={ok}")
