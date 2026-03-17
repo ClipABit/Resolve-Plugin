@@ -6,6 +6,7 @@ import sys
 import time
 import traceback
 import uuid
+import webbrowser
 from pathlib import Path
 from typing import Dict, List, Optional
 
@@ -340,13 +341,10 @@ class ClipABitApp(QWidget):
                 return  # Already logging in
             try:
                 port, verifier, wait, event, result_dict, server, auth_url = self.auth_manager.initiate_login()
-
-                msg_box = QMessageBox(self)
-                msg_box.setWindowTitle("Manual Authentication Required")
-                msg_box.setText("Please copy the URL below and paste it into your browser to sign in.")
-                msg_box.setInformativeText(auth_url)
-                msg_box.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
-                msg_box.exec()
+                
+                # Open browser automatically
+                print(f"[Auth] Opening browser: {auth_url}")
+                webbrowser.open(auth_url)
 
                 self.status_label.setText("Complete login in browser...")
                 self._login_state = {
