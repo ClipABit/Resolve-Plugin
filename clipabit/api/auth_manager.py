@@ -15,6 +15,9 @@ from typing import Callable, Optional, Tuple
 
 import requests
 
+# keyring is optional — it's the preferred credential store on macOS/Linux,
+# but on Windows we use DPAPI instead (avoids the 2.5KB size limit that
+# causes error 1783 with large Auth0 JWTs).
 try:
     import keyring
 except ImportError:
@@ -27,11 +30,17 @@ _TOKEN_FILE = Path.home() / ".clipabit" / "tokens.dat"
 _RESOURCES_DIR = Path(__file__).parent / "resources"
 
 # --- Windows DPAPI helpers ---
-# TODO: Move this into a class or separate module if it grows, and add better error handling and fallback logic.
+# DPAPI (Data Protection API) encrypts data using the current Windows user's
+# login credentials + a machine-specific key. The encrypted blob is only
+# decryptable by the same user on the same machine — this is the same
+# mechanism Chrome/Edge use for saved passwords. We use it instead of keyring
+# on Windows because keyring's Credential Manager backend has a ~2.5KB
+# payload limit that Auth0 JWTs routinely exceed (error 1783).
 _IS_WINDOWS = sys.platform == "win32"
 
 if _IS_WINDOWS:
     class _DATA_BLOB(ctypes.Structure):
+        """Win32 DATA_BLOB structure for CryptProtectData/CryptUnprotectData."""
         _fields_ = [("cbData", ctypes.wintypes.DWORD),
                      ("pbData", ctypes.POINTER(ctypes.c_char))]
 
@@ -87,10 +96,15 @@ def _save_tokens_to_storage(data: dict) -> None:
         except Exception as e:
             print(f"[Auth] Keyring save failed: {e}")
 
-    # Last resort: plaintext file
+    # Last resort: plaintext file — restrict to owner-only access
     _TOKEN_FILE.parent.mkdir(parents=True, exist_ok=True)
     _TOKEN_FILE.write_bytes(json_bytes)
-    print(f"[Auth] Tokens saved (unencrypted) to {_TOKEN_FILE}")
+    try:
+        _TOKEN_FILE.chmod(0o600)
+    except OSError:
+        pass  # Windows may not support POSIX permissions
+    print(f"[Auth] WARNING: Tokens saved UNENCRYPTED to {_TOKEN_FILE} "
+          f"(DPAPI and keyring both unavailable)")
 
 
 def _load_tokens_from_storage() -> Optional[str]:
@@ -129,13 +143,15 @@ def _delete_tokens_from_storage() -> None:
     if keyring:
         try:
             keyring.delete_password(SERVICE_NAME, KEYRING_USERNAME)
-        except Exception:
-            pass
+            print("[Auth] Cleared keyring entry")
+        except Exception as e:
+            print(f"[Auth] Keyring delete skipped: {e}")
     try:
         if _TOKEN_FILE.exists():
             _TOKEN_FILE.unlink()
-    except Exception:
-        pass
+            print(f"[Auth] Deleted token file: {_TOKEN_FILE}")
+    except Exception as e:
+        print(f"[Auth] Failed to delete token file: {e}")
 
 
 class AuthManager:
@@ -187,9 +203,11 @@ class AuthManager:
 
     def _start_callback_server(
         self, expected_state: str
-    ) -> Tuple[int, Callable[[int], Tuple[Optional[str], bool]]]:
+    ) -> Tuple[int, Callable[[int], Tuple[Optional[str], bool]], "Event", dict, "HTTPServer"]:
         """
-        Start one-shot callback server. Returns (port, wait_for_callback_fn).
+        Start one-shot callback server.
+
+        Returns (port, wait_for_callback_fn, event, result_dict, server).
         wait_for_callback(timeout_seconds) blocks until callback received or timeout,
         then returns (code, state_valid).
         """
@@ -242,7 +260,6 @@ class AuthManager:
                     self.send_header("Content-type", "text/html")
                     self.end_headers()
                     logo_svg = (_RESOURCES_DIR / "logo.svg").read_text(encoding="utf-8")
-                    
                     # Only show success/error when we have a terminal response (code or error).
                     # Otherwise show a neutral waiting page so the user doesn't see "Login Failed"
                     # while the flow may still be in progress.
@@ -303,6 +320,7 @@ class AuthManager:
     def initiate_login(self):
         """
         Start login flow: generate PKCE, start callback server.
+
         Returns (port, verifier, wait_for_callback, event, result_dict, server, authorization_url).
         """
         verifier, challenge = self._generate_pkce_pair()
@@ -392,14 +410,9 @@ class AuthManager:
         _save_tokens_to_storage(data)
 
     def _load_tokens(self) -> Optional[dict]:
-        """Retrieve tokens from keyring. Returns dict or None."""
-        print("[Auth] Loading tokens from keyring...")
-        try:
-            raw = keyring.get_password(SERVICE_NAME, KEYRING_USERNAME)
-        except Exception as e:
-            print(f"[Auth] Failed to load tokens from keyring: {e}")
-            return None
-            
+        """Retrieve tokens from platform-appropriate storage. Returns dict or None."""
+        print("[Auth] Loading tokens...")
+        raw = _load_tokens_from_storage()
         if not raw:
             return None
         try:
@@ -422,7 +435,7 @@ class AuthManager:
             return None
 
     def is_logged_in(self) -> bool:
-        """Check if valid tokens are stored in keyring (logged in)."""
+        """Check if valid tokens are available (logged in)."""
         try:
             tokens = self._load_tokens()
             if not tokens:
@@ -435,13 +448,13 @@ class AuthManager:
             return False
 
     def delete_tokens(self) -> None:
-        """Clear tokens from keyring (logout)."""
-        print("[Auth] Clearing tokens from keyring...")
-        try:
-            keyring.delete_password(SERVICE_NAME, KEYRING_USERNAME)
-        except Exception as e:
-            print(f"[Auth] Failed to delete tokens from keyring: {e}")
-            pass  # No password stored or backend error
+        """Clear tokens from all storage locations (logout)."""
+        print("[Auth] Clearing tokens...")
+        _delete_tokens_from_storage()
+
+    def refresh_tokens(self, tokens: Optional[dict] = None) -> Optional[dict]:
+        """Public entry point for token refresh (used by NetworkClient on 401)."""
+        return self._refresh_tokens(tokens)
 
     def _refresh_tokens(self, tokens: Optional[dict] = None) -> Optional[dict]:
         """Refresh access token using refresh_token. Returns new token data or None."""

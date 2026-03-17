@@ -25,6 +25,9 @@ class JobTracker(QObject):
 
     def start(self):
         """Start polling (just starts the internal timer)."""
+        if self._network is None:
+            print("[JobTracker] Cannot start — no NetworkClient configured")
+            return
         interval = int(Config.STATUS_CHECK_INTERVAL * 1000)
         self._timer.start(interval)
         print(f"[JobTracker] Polling started (every {Config.STATUS_CHECK_INTERVAL}s)")

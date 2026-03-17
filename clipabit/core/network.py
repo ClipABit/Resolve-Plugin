@@ -78,7 +78,7 @@ class NetworkClient(QObject):
 
             elif status == 401 and not retried and self._auth_manager and retry_fn:
                 print(f"[Network] {method} {url} -> 401 — refreshing token and retrying")
-                refreshed = self._auth_manager._refresh_tokens()
+                refreshed = self._auth_manager.refresh_tokens()
                 if refreshed:
                     reply.deleteLater()
                     retry_fn()

@@ -30,6 +30,11 @@ class FileUploader(QObject):
 
     def start(self):
         """Begin the upload (returns immediately — non-blocking)."""
+        if self._network is None:
+            self.upload_failed.emit(
+                self.filename, self.file_hash, "No NetworkClient configured"
+            )
+            return
         if not os.path.exists(self.filepath):
             print(f"[Upload] File not found: {self.filepath}")
             self.upload_failed.emit(

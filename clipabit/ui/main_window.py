@@ -340,7 +340,7 @@ class ClipABitApp(QWidget):
                 return  # Already logging in
             try:
                 port, verifier, wait, event, result_dict, server, auth_url = self.auth_manager.initiate_login()
-                
+
                 msg_box = QMessageBox(self)
                 msg_box.setWindowTitle("Manual Authentication Required")
                 msg_box.setText("Please copy the URL below and paste it into your browser to sign in.")
@@ -450,16 +450,14 @@ class ClipABitApp(QWidget):
         print("[Search] Clear button clicked")
         self._search_generation += 1  # Invalidate pending thumbnail loads
         self.search_input.clear()
-        # Remove everything from results layout
+        # Remove and destroy everything from results layout
         for i in reversed(range(self.results_layout.count())):
             item = self.results_layout.itemAt(i)
             if item.widget():
-                item.widget().setParent(None)
+                item.widget().deleteLater()
             elif item.layout():
                 self._clear_layout(item.layout())
-                self.results_layout.removeItem(item)
-            elif item.spacerItem():
-                self.results_layout.removeItem(item)
+            self.results_layout.removeItem(item)
         # Re-create the empty state label fresh in the layout
         self.empty_state_label = QLabel("no queries made yet.")
         self.empty_state_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -1356,13 +1354,13 @@ class ClipABitApp(QWidget):
         self.results_layout.addStretch()
     
     def _clear_layout(self, layout):
-        """Recursively clear a layout."""
+        """Recursively clear and destroy all widgets in a layout."""
         if layout is None:
             return
         while layout.count():
             item = layout.takeAt(0)
             if item.widget():
-                item.widget().setParent(None)
+                item.widget().deleteLater()
             elif item.layout():
                 self._clear_layout(item.layout())
         
@@ -1390,13 +1388,19 @@ class ClipABitApp(QWidget):
         """Load a thumbnail into a label (called via QTimer after cards are shown)."""
         if generation != self._search_generation:
             return  # Results were cleared, skip
-        try:
-            pixmap = extract_thumbnail(file_path, time_s, size=(280, 140))
+
+        def on_ready(pixmap):
             if generation != self._search_generation:
                 return  # Cleared while extracting
             if pixmap and label and label.parent():
                 label.setPixmap(pixmap)
                 label.setScaledContents(True)
+
+        try:
+            extract_thumbnail(
+                file_path, time_s, size=(280, 140),
+                on_ready=on_ready, parent=self,
+            )
         except Exception as e:
             print(f"[Search] Thumbnail load failed: {e}")
 

@@ -5,7 +5,7 @@ from PyQt6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QSlider, QWidget, QSizePolicy,
 )
-from PyQt6.QtCore import Qt, QUrl, QTimer, pyqtSignal
+from PyQt6.QtCore import Qt, QUrl, QTimer, QObject, pyqtSignal
 from PyQt6.QtMultimedia import QMediaPlayer, QAudioOutput
 from PyQt6.QtMultimediaWidgets import QVideoWidget
 
@@ -490,82 +490,118 @@ class VideoPreviewDialog(QDialog):
         super().closeEvent(event)
 
 
-def extract_thumbnail(file_path: str, time_s: float, size=(280, 140)):
-    """Extract a thumbnail frame from a video file at the given timestamp.
-    Returns a QPixmap or None if extraction fails."""
-    from PyQt6.QtCore import QEventLoop, QSize
-    from PyQt6.QtGui import QPixmap
-    from PyQt6.QtMultimedia import QMediaPlayer, QVideoSink, QVideoFrame
+class ThumbnailExtractor(QObject):
+    """Non-blocking thumbnail extractor — emits `ready` with a QPixmap or None."""
 
-    if not file_path or not os.path.exists(file_path):
-        return None
+    ready = pyqtSignal(object)  # QPixmap or None
 
-    print(f"[Thumbnail] Extracting from {os.path.basename(file_path)} at {time_s:.2f}s")
+    def __init__(self, file_path: str, time_s: float, size=(280, 140), parent=None):
+        super().__init__(parent)
+        from PyQt6.QtGui import QPixmap
+        from PyQt6.QtMultimedia import QMediaPlayer, QVideoSink
 
-    pixmap_result = [None]
-    seeked = [False]
-    loop = QEventLoop()
+        self._size = size
+        self._seeked = False
+        self._done = False
+        self._QPixmap = QPixmap
 
-    player = QMediaPlayer()
-    sink = QVideoSink()
-    player.setVideoOutput(sink)
+        self._player = QMediaPlayer(self)
+        self._sink = QVideoSink(self)
+        self._player.setVideoOutput(self._sink)
 
-    def on_frame(frame: QVideoFrame):
-        if not seeked[0]:
+        self._sink.videoFrameChanged.connect(self._on_frame)
+        self._player.mediaStatusChanged.connect(self._on_media_status)
+        self._player.errorOccurred.connect(self._on_error)
+
+        self._target_ms = int(time_s * 1000)
+
+        self._timeout = QTimer(self)
+        self._timeout.setSingleShot(True)
+        self._timeout.timeout.connect(lambda: self._finish(None))
+        self._timeout.start(5000)
+
+        print(f"[Thumbnail] Extracting from {os.path.basename(file_path)} at {time_s:.2f}s")
+        self._player.setSource(QUrl.fromLocalFile(file_path))
+
+    def _on_media_status(self, status):
+        from PyQt6.QtMultimedia import QMediaPlayer
+        if self._done:
             return
-        if frame.isValid() and pixmap_result[0] is None:
+        if status in (QMediaPlayer.MediaStatus.BufferedMedia,
+                      QMediaPlayer.MediaStatus.LoadedMedia):
+            print(f"[Thumbnail] Seeking to {self._target_ms}ms")
+            self._player.setPosition(self._target_ms)
+            self._seeked = True
+            self._player.play()
+
+    def _on_frame(self, frame):
+        from PyQt6.QtCore import QSize
+        if not self._seeked or self._done:
+            return
+        if frame.isValid():
             image = frame.toImage()
             if not image.isNull():
+                w, h = self._size
                 scaled = image.scaled(
-                    QSize(size[0], size[1]),
+                    QSize(w, h),
                     Qt.AspectRatioMode.KeepAspectRatioByExpanding,
                     Qt.TransformationMode.SmoothTransformation,
                 )
-                x = (scaled.width() - size[0]) // 2
-                y = (scaled.height() - size[1]) // 2
-                cropped = scaled.copy(x, y, size[0], size[1])
-                pixmap_result[0] = QPixmap.fromImage(cropped)
-                print(f"[Thumbnail] Captured frame at position {player.position()}ms")
-            loop.quit()
+                x = (scaled.width() - w) // 2
+                y = (scaled.height() - h) // 2
+                cropped = scaled.copy(x, y, w, h)
+                pixmap = self._QPixmap.fromImage(cropped)
+                print(f"[Thumbnail] Captured frame at {self._player.position()}ms")
+                self._finish(pixmap)
 
-    sink.videoFrameChanged.connect(on_frame)
-
-    def on_media_status(status):
-        status_name = status.name if hasattr(status, 'name') else str(status)
-        print(f"[Thumbnail] Media status: {status_name}")
-        if status in (QMediaPlayer.MediaStatus.BufferedMedia,
-                      QMediaPlayer.MediaStatus.LoadedMedia):
-            target_ms = int(time_s * 1000)
-            print(f"[Thumbnail] Seeking to {target_ms}ms")
-            player.setPosition(target_ms)
-            seeked[0] = True
-            player.play()
-
-    player.mediaStatusChanged.connect(on_media_status)
-
-    def on_error(error, msg=""):
+    def _on_error(self, error, msg=""):
         print(f"[Thumbnail] Error: {error} - {msg}")
+        self._finish(None)
+
+    def _finish(self, pixmap):
+        if self._done:
+            return
+        self._done = True
+        self._timeout.stop()
+        print(f"[Thumbnail] Result: {'OK' if pixmap else 'FAILED'}")
+        self.ready.emit(pixmap)
+        try:
+            self._player.stop()
+            self._player.setSource(QUrl())
+            self._player.setVideoOutput(None)
+        except Exception as e:
+            print(f"[Thumbnail] Cleanup error: {e}")
+        self.deleteLater()
+
+
+def extract_thumbnail(file_path: str, time_s: float, size=(280, 140), on_ready=None, parent=None):
+    """Extract a thumbnail from a video file at the given timestamp.
+
+    If on_ready is provided, extraction is non-blocking: on_ready(QPixmap_or_None)
+    is called when done, and the ThumbnailExtractor is returned.
+
+    If on_ready is None, falls back to blocking extraction (legacy)."""
+    if not file_path or not os.path.exists(file_path):
+        if on_ready:
+            on_ready(None)
+            return None
+        return None
+
+    if on_ready is not None:
+        extractor = ThumbnailExtractor(file_path, time_s, size, parent=parent)
+        extractor.ready.connect(on_ready)
+        return extractor
+
+    # Blocking fallback (used outside of event loop contexts)
+    from PyQt6.QtCore import QEventLoop
+    result = [None]
+    loop = QEventLoop()
+
+    def _on_ready(pixmap):
+        result[0] = pixmap
         loop.quit()
 
-    player.errorOccurred.connect(on_error)
-
-    # Timeout safety
-    timeout = QTimer()
-    timeout.setSingleShot(True)
-    timeout.timeout.connect(lambda: (print("[Thumbnail] Timeout!"), loop.quit()))
-    timeout.start(5000)
-
-    player.setSource(QUrl.fromLocalFile(file_path))
-
+    extractor = ThumbnailExtractor(file_path, time_s, size, parent=None)
+    extractor.ready.connect(_on_ready)
     loop.exec()
-
-    timeout.stop()
-    try:
-        player.stop()
-        player.setSource(QUrl())
-        player.setVideoOutput(None)
-    except Exception as e:
-        print(f"[Thumbnail] Cleanup error: {e}")
-
-    print(f"[Thumbnail] Result: {'OK' if pixmap_result[0] else 'FAILED'}")
-    return pixmap_result[0]
+    return result[0]
