@@ -391,6 +391,8 @@ class AuthManager:
 
         print(f"[Auth] Received access_token: {'yes' if access_token else 'no'}")
         print(f"[Auth] Received refresh_token: {'yes' if refresh_token else 'no'}")
+        if not refresh_token:
+            print("[Auth] WARNING: No refresh_token received. Plugin will not be able to auto-refresh.")
         print(f"[Auth] Token expires in: {expires_in}s")
 
         id_token = data.get("id_token", "")
@@ -453,50 +455,79 @@ class AuthManager:
         _delete_tokens_from_storage()
 
     def refresh_tokens(self, tokens: Optional[dict] = None) -> Optional[dict]:
-        """Public entry point for token refresh (used by NetworkClient on 401)."""
-        return self._refresh_tokens(tokens)
+        """
+        Public entry point for token refresh (used by NetworkClient on 401).
+        Thread-safe: prevents multiple simultaneous refresh attempts.
+        """
+        with self._token_lock:
+            return self._refresh_tokens(tokens)
 
     def _refresh_tokens(self, tokens: Optional[dict] = None) -> Optional[dict]:
         """Refresh access token using refresh_token. Returns new token data or None."""
         if tokens is None:
             tokens = self._load_tokens()
-        if not tokens or not tokens.get("refresh_token"):
+        
+        if not tokens:
+            print("[Auth] Refresh aborted: No tokens found in storage")
+            return None
+            
+        rt = tokens.get("refresh_token")
+        if not rt:
+            print("[Auth] Refresh aborted: No refresh_token available")
             return None
 
         token_url = f"https://{self.AUTH0_DOMAIN}/oauth/token"
         payload = {
             "grant_type": "refresh_token",
             "client_id": self.CLIENT_ID,
-            "refresh_token": tokens["refresh_token"],
+            "refresh_token": rt,
         }
 
-        print("[Auth] Access token expired, refreshing...")
-        print("[Auth] Refresh request sent")
+        print(f"[Auth] Access token expired or invalid, refreshing (RT: {rt[:8]}...)...")
 
-        response = requests.post(
-            token_url,
-            data=payload,
-            headers={"Content-Type": "application/x-www-form-urlencoded"},
-            timeout=10,
-        )
+        try:
+            response = requests.post(
+                token_url,
+                data=payload,
+                headers={"Content-Type": "application/x-www-form-urlencoded"},
+                timeout=15,
+            )
+        except Exception as e:
+            print(f"[Auth] Refresh request failed (network error): {e}")
+            return None
 
         if not response.ok:
             print(f"[Auth] Refresh failed: HTTP {response.status_code}")
-            if self._debug_auth:
-                print(f"[Auth] Refresh response body: {response.text}")
+            try:
+                error_data = response.json()
+                error_code = error_data.get("error")
+                error_desc = error_data.get("error_description")
+                print(f"[Auth] Error: {error_code} - {error_desc}")
+                
+                # If the refresh token is explicitly invalid or revoked, we should clear it.
+                # Common Auth0 error codes for this are 'invalid_grant'.
+                # TODO: validate this
+                if error_code == "invalid_grant":
+                    print("[Auth] Refresh token is invalid/revoked. Would normally clear tokens.")
+                    # print("[Auth] Refresh token is invalid/revoked. Clearing tokens.")
+                    # self.delete_tokens()
+            except Exception:
+                if self._debug_auth:
+                    print(f"[Auth] Refresh error response body: {response.text}")
             return None
 
         data = response.json()
         access_token = data.get("access_token") or ""
         expires_in = data.get("expires_in", 0)
-        refresh_token = data.get("refresh_token") or tokens.get("refresh_token")
+        # Auth0 might return a new refresh token if rotation is enabled
+        refresh_token = data.get("refresh_token") or rt
         id_token = data.get("id_token") or tokens.get("id_token", "")
 
         print(f"[Auth] New access_token received: {'yes' if access_token else 'no'}")
 
         expires_at = time.time() + expires_in
         self._save_tokens(access_token, refresh_token, id_token, expires_at)
-        print("[Auth] Tokens updated in keyring")
+        print("[Auth] Tokens updated in secure storage")
 
         return {"access_token": access_token, "expires_at": expires_at}
 

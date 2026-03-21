@@ -93,6 +93,7 @@ class ClipABitApp(QWidget):
         # Shared non-blocking HTTP client (uses QNetworkAccessManager internally)
         self._network = NetworkClient(auth_manager=self.auth_manager, parent=self)
         self._network.reauth_required.connect(self._on_network_reauth)
+        self._reauth_dialog_showing = False  # Flag to prevent multiple dialogs
 
         # Initialize job tracker (QObject with internal QTimer — no threads)
         self.job_tracker = JobTracker(network=self._network, parent=self)
@@ -400,7 +401,19 @@ class ClipABitApp(QWidget):
     def _on_network_reauth(self):
         """Handle re-authentication prompt from NetworkClient or AuthManager."""
         self._update_auth_button()
+        
+        # Debounce re-auth dialogs to avoid multiple popups
+        if getattr(self, "_reauth_dialog_showing", False):
+            return
+        self._reauth_dialog_showing = True
+        
+        # Clear upload queue to prevent further failures
+        self.upload_queue.clear()
+        self.is_uploading = False
+        self.current_upload = None
+        
         QMessageBox.warning(self, "Session Expired", "Please sign in again.")
+        self._reauth_dialog_showing = False
 
     def _create_search_bar(self):
         """Create the search bar matching Figma design."""

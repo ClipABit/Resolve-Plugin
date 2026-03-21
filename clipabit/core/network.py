@@ -77,18 +77,29 @@ class NetworkClient(QObject):
                 reply.deleteLater()
 
             elif status == 401 and not retried and self._auth_manager and retry_fn:
-                print(f"[Network] {method} {url} -> 401 — refreshing token and retrying")
+                print(f"[Network] {method} {url} -> 401 — attempting token refresh")
                 refreshed = self._auth_manager.refresh_tokens()
                 if refreshed:
+                    print(f"[Network] Refresh successful — retrying {method} {url}")
                     reply.deleteLater()
                     retry_fn()
                     return
-                print("[Network] Refresh failed — prompting re-auth")
-                self._auth_manager.delete_tokens()
-                self.reauth_required.emit()
+                
+                # Refresh failed. Check if we are still "logged in" (have tokens).
+                # If refresh failed due to a network error, we might still have a 
+                # valid-looking session that we can try again later. 
+                # If tokens are gone, then we definitely need to re-auth.
+                if not self._auth_manager.is_logged_in():
+                    print("[Network] Session lost (no tokens) — prompting re-auth")
+                    self.reauth_required.emit()
+                    on_error_msg = "Session expired. Please sign in again."
+                else:
+                    print("[Network] Refresh failed (possible network issue) — failing request without logout")
+                    on_error_msg = "Authentication failed (HTTP 401). Please check your connection."
+
                 try:
                     if on_error:
-                        on_error("Authentication failed (HTTP 401)")
+                        on_error(on_error_msg)
                 except Exception as e:
                     print(f"[Network] Error in error callback: {e}")
                     traceback.print_exc()
