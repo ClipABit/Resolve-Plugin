@@ -1,3 +1,9 @@
+## [1.2.0-staging.3](https://github.com/ClipABit/Resolve-Plugin/compare/v1.2.0-staging.2...v1.2.0-staging.3) (2026-03-22)
+
+### Bug Fixes
+
+* resolves concurrency issue in semantic release ([9fde58d](https://github.com/ClipABit/Resolve-Plugin/commit/9fde58d1e81b13b0d7e8b55dc17c5262694c5f8e))
+
 ## [1.2.0-staging.2](https://github.com/ClipABit/Resolve-Plugin/compare/v1.2.0-staging.1...v1.2.0-staging.2) (2026-03-17)
 
 ### Bug Fixes
