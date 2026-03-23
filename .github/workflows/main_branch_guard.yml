@@ -26,7 +26,7 @@ jobs:
             });
 
   check-source-branch:
-    if: github.base_ref == 'main' && github.head_ref != 'staging'
+    if: github.event.action != 'opened' && github.base_ref == 'main' && github.head_ref != 'staging'
     runs-on: ubuntu-latest
     steps:
       - name: Verify Staging to Main
