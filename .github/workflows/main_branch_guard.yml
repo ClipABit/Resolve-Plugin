@@ -1,14 +1,14 @@
-name: Auto-Retarget PRs
+name: Main Branch Guard
 
 on:
   pull_request:
     branches:
       - main
-    types: [opened]
+    types: [opened, reopened, synchronize, edited]
 
 jobs:
   retarget:
-    if: github.head_ref != 'staging'
+    if: github.event.action == 'opened' && github.head_ref != 'staging'
     runs-on: ubuntu-latest
     permissions:
       pull-requests: write
@@ -24,3 +24,13 @@ jobs:
               pull_number: context.payload.pull_request.number,
               base: 'staging'
             });
+
+  check-source-branch:
+    if: github.base_ref == 'main' && github.head_ref != 'staging'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verify Staging to Main
+        run: |
+          echo "ERROR: Pull requests to 'main' must originate from 'staging'."
+          echo "Current source branch is: ${{ github.head_ref }}"
+          exit 1

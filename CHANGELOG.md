@@ -10,6 +10,11 @@
 * patches ui from crashing in davinci upon login ([8314010](https://github.com/ClipABit/Resolve-Plugin/commit/8314010386ab7d74824d4398c33454a4f7b1bf1f))
 * plugin automatically opens browser ([#37](https://github.com/ClipABit/Resolve-Plugin/issues/37)) ([b7dc570](https://github.com/ClipABit/Resolve-Plugin/commit/b7dc5703e0c7df3b132b2f210a7ee0f1cd99b0a5))
 * resolves concurrency issue in semantic release ([9fde58d](https://github.com/ClipABit/Resolve-Plugin/commit/9fde58d1e81b13b0d7e8b55dc17c5262694c5f8e))
+## [1.2.0-staging.4](https://github.com/ClipABit/Resolve-Plugin/compare/v1.2.0-staging.3...v1.2.0-staging.4) (2026-03-23)
+
+### Bug Fixes
+
+* doesn't trigger installer on staging release ([#38](https://github.com/ClipABit/Resolve-Plugin/issues/38)) ([6a8ac6e](https://github.com/ClipABit/Resolve-Plugin/commit/6a8ac6e51e584443449fd7ec335d52d9c272e0df))
 
 ## [1.2.0-staging.3](https://github.com/ClipABit/Resolve-Plugin/compare/v1.2.0-staging.2...v1.2.0-staging.3) (2026-03-22)
 

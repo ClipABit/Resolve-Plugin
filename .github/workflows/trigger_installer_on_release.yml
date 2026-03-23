@@ -8,6 +8,7 @@ permissions: {}
 
 jobs:
   dispatch-installer:
+    if: "!github.event.release.prerelease"
     runs-on: ubuntu-latest
     steps:
       - name: dispatch installer build for released tag
