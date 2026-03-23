@@ -36,3 +36,8 @@ class Config:
     STATUS_CHECK_TIMEOUT = 10
     STATUS_CHECK_INTERVAL = 2
     QUEUE_DELAY = 1000  # milliseconds
+
+    # Repo information (for auto-update)
+    OWNER = "ClipABit"
+    REPO = "Resolve-Plugin"
+    RELEASE_TAG = "v1.2.0"

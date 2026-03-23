@@ -133,6 +133,67 @@ class NetworkClient(QObject):
 
         _do()
 
+    def get_github_release_version(self, owner: str, repo: str,
+                                   on_success: Callable = None,
+                                   on_error: Callable = None):
+        """Fetch latest release version from GitHub API (no auth required)."""
+        url = f"https://api.github.com/repos/{owner}/{repo}/releases/latest"
+        print(f"[Network] Fetching latest release from {owner}/{repo}")
+
+        req = QNetworkRequest(QUrl(url))
+        if hasattr(req, "setTransferTimeout"):
+            req.setTransferTimeout(30_000)
+        reply = self._nam.get(req)
+        self._wire_reply(
+            reply, on_success, on_error,
+            method="GET", url="releases/latest",
+        )
+
+    def download_file(self, url: str, dest_path: str, timeout: int = 120,
+                      on_success: Callable = None,
+                      on_error: Callable = None,
+                      on_progress: Callable = None):
+        """Non-blocking file download (no auth). on_success(dest_path), on_progress(received, total)."""
+        print(f"[Network] Downloading {url} -> {dest_path}")
+
+        req = QNetworkRequest(QUrl(url))
+        req.setAttribute(
+            QNetworkRequest.Attribute.RedirectPolicyAttribute,
+            QNetworkRequest.RedirectPolicy.NoLessSafeRedirectPolicy,
+        )
+        if hasattr(req, "setTransferTimeout"):
+            req.setTransferTimeout(timeout * 1000)
+        reply = self._nam.get(req)
+
+        if on_progress:
+            reply.downloadProgress.connect(on_progress)
+
+        def _finished():
+            net_err = reply.error()
+            status = reply.attribute(QNetworkRequest.Attribute.HttpStatusCodeAttribute)
+            if net_err == QNetworkReply.NetworkError.NoError:
+                data = reply.readAll().data()
+                print(f"[Network] Download complete: {len(data)} bytes -> {dest_path}")
+                try:
+                    os.makedirs(os.path.dirname(dest_path), exist_ok=True)
+                    with open(dest_path, "wb") as f:
+                        f.write(data)
+                    if on_success:
+                        on_success(dest_path)
+                except Exception as e:
+                    print(f"[Network] Error writing file: {e}")
+                    if on_error:
+                        on_error(str(e))
+            else:
+                body = reply.readAll().data().decode("utf-8", errors="replace")
+                msg = f"HTTP {status}: {body}" if status else f"Network error: {reply.errorString()}"
+                print(f"[Network] Download failed: {msg[:200]}")
+                if on_error:
+                    on_error(msg)
+            reply.deleteLater()
+
+        reply.finished.connect(_finished)
+
     def post_multipart(self, url: str, fields: dict = None,
                        file_path: str = None, file_field: str = "files",
                        filename: str = None, timeout: int = 300,
