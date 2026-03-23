@@ -1,3 +1,9 @@
+## [1.2.1-staging.3](https://github.com/ClipABit/Resolve-Plugin/compare/v1.2.1-staging.2...v1.2.1-staging.3) (2026-03-23)
+
+### Bug Fixes
+
+* merges worflows into a single job ([#43](https://github.com/ClipABit/Resolve-Plugin/issues/43)) ([711e466](https://github.com/ClipABit/Resolve-Plugin/commit/711e46622d70e712859d2185d08918a38e6349b4))
+
 ## [1.2.1-staging.2](https://github.com/ClipABit/Resolve-Plugin/compare/v1.2.1-staging.1...v1.2.1-staging.2) (2026-03-23)
 
 ### Bug Fixes
