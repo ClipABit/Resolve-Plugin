@@ -1,3 +1,9 @@
+## [1.2.1-staging.1](https://github.com/ClipABit/Resolve-Plugin/compare/v1.2.0...v1.2.1-staging.1) (2026-03-23)
+
+### Bug Fixes
+
+* doesn't trigger installer on staging release ([#38](https://github.com/ClipABit/Resolve-Plugin/issues/38)) ([d004d94](https://github.com/ClipABit/Resolve-Plugin/commit/d004d944bc764e9b977dbf9ebbd6bb4b05d38c53))
+
 ## [1.2.0](https://github.com/ClipABit/Resolve-Plugin/compare/v1.1.0...v1.2.0) (2026-03-22)
 
 ### Features
