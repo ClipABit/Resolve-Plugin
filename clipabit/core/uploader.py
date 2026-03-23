@@ -18,10 +18,14 @@ class FileUploader(QObject):
 
     MAX_RETRIES = 3
 
-    def __init__(self, file_info: dict, namespace: str, network=None, parent=None):
+    def __init__(self, file_info: dict, namespace: str,
+                 hashed_identifier: str = "", project_id: str = "",
+                 network=None, parent=None):
         super().__init__(parent)
         self.file_info = file_info
         self.namespace = namespace
+        self.hashed_identifier = hashed_identifier
+        self.project_id = project_id
         self.filepath = file_info["filepath"]
         self.filename = file_info["filename"]
         self.file_hash = file_info["hash"]
@@ -101,7 +105,11 @@ class FileUploader(QObject):
 
         self._network.post_multipart(
             Config.UPLOAD_API_URL,
-            fields={"namespace": self.namespace},
+            fields={
+                "namespace": self.namespace,
+                "hashed_identifier": self.hashed_identifier,
+                "project_id": self.project_id,
+            },
             file_path=self.filepath,
             filename=self.filename,
             timeout=timeout,

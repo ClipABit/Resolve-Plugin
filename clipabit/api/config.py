@@ -29,8 +29,6 @@ class Config:
     SEARCH_API_URL = f"{SEARCH_BASE_URL}/search"
     UPLOAD_API_URL = f"{SERVER_BASE_URL}/upload"
     STATUS_API_URL = f"{SERVER_BASE_URL}/status"
-    DELETE_API_URL = f"{SERVER_BASE_URL}/videos"
-    
     # Timeouts and delays
     UPLOAD_TIMEOUT = 300
     STATUS_CHECK_TIMEOUT = 10
