@@ -1,0 +1,36 @@
+name: Main Branch Guard
+
+on:
+  pull_request:
+    branches:
+      - main
+    types: [opened, reopened, synchronize, edited]
+
+jobs:
+  retarget:
+    if: github.event.action == 'opened' && github.head_ref != 'staging'
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+      contents: read
+    steps:
+      - name: Change PR base to staging
+        uses: actions/github-script@v7
+        with:
+          script: |
+            github.rest.pulls.update({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: context.payload.pull_request.number,
+              base: 'staging'
+            });
+
+  check-source-branch:
+    if: github.event.action != 'opened' && github.base_ref == 'main' && github.head_ref != 'staging'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verify Staging to Main
+        run: |
+          echo "ERROR: Pull requests to 'main' must originate from 'staging'."
+          echo "Current source branch is: ${{ github.head_ref }}"
+          exit 1
