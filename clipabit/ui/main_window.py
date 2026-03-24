@@ -31,6 +31,10 @@ from ..core.utils import (
 )
 from ..core.network import NetworkClient
 from ..core.uploader import FileUploader
+from ..core.version_manager import (
+    load_installed_version, save_installed_version,
+    is_newer, get_plugin_install_dir, apply_update,
+)
 from ..api.auth_manager import AuthManager
 from .theme import Theme
 from .video_preview import VideoPreviewDialog, extract_thumbnail
@@ -69,6 +73,10 @@ if resolve:
 class ClipABitApp(QWidget):
     def __init__(self):
         super().__init__()
+        
+        # Log version on startup
+        installed_ver = load_installed_version(Config.RELEASE_TAG)
+        print(f"[ClipABit] Version: {installed_ver}")
         
         # Initialize data
         self.clip_map = {}
@@ -252,6 +260,14 @@ class ClipABitApp(QWidget):
         """Show/hide UI elements based on authentication state."""
         is_logged_in = self.auth_manager.is_logged_in() if self.auth_manager else False
         
+        # Check for updates when search screen is about to show
+        if is_logged_in:
+            self._network.get_github_release_version(
+                Config.OWNER, Config.REPO,
+                on_success=self._on_version_check_success,
+                on_error=self._on_version_check_error,
+            )
+        
         # Toggle visibility of content areas
         self.get_started_content.setVisible(not is_logged_in)
         self.search_content.setVisible(is_logged_in)
@@ -401,6 +417,111 @@ class ClipABitApp(QWidget):
         """Handle re-authentication prompt from NetworkClient or AuthManager."""
         self._update_auth_button()
         QMessageBox.warning(self, "Session Expired", "Please sign in again.")
+
+    # ── Auto-update flow ─────────────────────────────────────────────
+
+    def _on_version_check_success(self, status: int, data: dict):
+        """Handle successful version check."""
+        try:
+            remote_tag = data.get("tag_name")
+            zipball_url = data.get("zipball_url")
+            if not remote_tag:
+                print("[Version] No tag_name in release response")
+                return
+
+            local_tag = load_installed_version(Config.RELEASE_TAG)
+            print(f"[Version] Local: {local_tag}  Remote: {remote_tag}")
+
+            if not is_newer(remote_tag, local_tag):
+                print("[Version] Already up to date")
+                return
+
+            print(f"[Version] Update available: {local_tag} -> {remote_tag}")
+            self._pending_update = {
+                "remote_tag": remote_tag,
+                "zipball_url": zipball_url,
+            }
+            self._prompt_update(remote_tag)
+        except Exception as e:
+            print(f"[Version] Error parsing release data: {e}")
+            traceback.print_exc()
+
+    def _on_version_check_error(self, error: str):
+        """Handle version check error (non-blocking)."""
+        print(f"[Version] Failed to check release version: {error}")
+
+    def _prompt_update(self, remote_tag: str):
+        """Ask the user whether to download and install the update."""
+        reply = QMessageBox.question(
+            self,
+            "Update Available",
+            f"A new version ({remote_tag}) is available.\n\n"
+            "Would you like to download and install it?\n"
+            "The plugin will need to close after the update is applied.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+        )
+        if reply == QMessageBox.StandardButton.Yes:
+            self._start_update_download()
+        else:
+            print("[Version] User declined update")
+
+    def _start_update_download(self):
+        """Download the zipball to a temp file."""
+        info = getattr(self, "_pending_update", None)
+        if not info:
+            return
+        import tempfile
+        self._update_zip_path = os.path.join(
+            tempfile.gettempdir(), f"clipabit-update-{info['remote_tag']}.zip"
+        )
+        print(f"[Version] Downloading update to {self._update_zip_path}")
+        self._network.download_file(
+            info["zipball_url"],
+            self._update_zip_path,
+            on_success=self._on_update_downloaded,
+            on_error=self._on_update_download_error,
+        )
+
+    def _on_update_downloaded(self, zip_path: str):
+        """Apply the downloaded update and prompt the user to restart."""
+        info = getattr(self, "_pending_update", None)
+        if not info:
+            return
+        try:
+            install_dir = get_plugin_install_dir()
+            apply_update(zip_path, install_dir)
+            save_installed_version(info["remote_tag"])
+
+            QMessageBox.information(
+                self,
+                "Update Installed",
+                f"ClipABit has been updated to {info['remote_tag']}.\n\n"
+                "The plugin will now close. Please reopen it to use the new version.",
+            )
+            self.close()
+        except Exception as e:
+            print(f"[Update] Failed to apply update: {e}")
+            traceback.print_exc()
+            QMessageBox.warning(
+                self, "Update Failed",
+                f"Could not apply update:\n{e}\n\nYou can continue using the current version.",
+            )
+        finally:
+            try:
+                os.remove(zip_path)
+            except OSError:
+                pass
+            self._pending_update = None
+
+    def _on_update_download_error(self, error: str):
+        """Handle download failure (non-blocking)."""
+        print(f"[Version] Update download failed: {error}")
+        QMessageBox.warning(
+            self, "Download Failed",
+            f"Could not download the update:\n{error}\n\n"
+            "You can continue using the current version.",
+        )
+        self._pending_update = None
 
     def _create_search_bar(self):
         """Create the search bar matching Figma design."""
