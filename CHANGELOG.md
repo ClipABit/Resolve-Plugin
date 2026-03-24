@@ -1,3 +1,9 @@
+## [1.3.0-staging.1](https://github.com/ClipABit/Resolve-Plugin/compare/v1.2.1-staging.3...v1.3.0-staging.1) (2026-03-24)
+
+### Features
+
+* add auto-update workflow ([#45](https://github.com/ClipABit/Resolve-Plugin/issues/45)) ([ae1d56d](https://github.com/ClipABit/Resolve-Plugin/commit/ae1d56d8568d2194239ef3984dcfe09a403c613b))
+
 ## [1.2.1-staging.3](https://github.com/ClipABit/Resolve-Plugin/compare/v1.2.1-staging.2...v1.2.1-staging.3) (2026-03-23)
 
 ### Bug Fixes
