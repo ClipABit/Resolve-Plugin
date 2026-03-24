@@ -154,15 +154,16 @@ class ClipABitApp(QWidget):
         self.get_started_content = self._create_get_started_content()
         main_layout.addWidget(self.get_started_content, 1)
         
-        # Content for main search screen (after login)
-        self.search_content = self._create_search_content()
-        main_layout.addWidget(self.search_content, 1)
+        # Content for upload panel (after login)
+        self.upload_content = self._create_upload_content()
+        main_layout.addWidget(self.upload_content, 1)
         
-        # Internal status label (kept for message plumbing, not shown in UI)
+        # Status bar at bottom
         self.status_label = QLabel("Ready")
         self.status_label.setObjectName("statusBar")
-        self.status_label.setVisible(False)
-        
+        self.status_label.setContentsMargins(10, 4, 10, 4)
+        main_layout.addWidget(self.status_label)
+
         self.setLayout(main_layout)
         
         # Show appropriate content based on login state
@@ -216,44 +217,83 @@ class ClipABitApp(QWidget):
         content.setLayout(layout)
         return content
     
-    def _create_search_content(self):
-        """Create the main search screen shown after login."""
+    def _create_upload_content(self):
+        """Create the upload panel shown after login with search bar and upload zone."""
         content = QWidget()
-        content.setObjectName("searchContent")
-        content_layout = QVBoxLayout()
-        content_layout.setSpacing(20)
-        content_layout.setContentsMargins(40, 20, 40, 40)
-        
+        content.setObjectName("uploadContent")
+        layout = QVBoxLayout()
+        layout.setSpacing(20)
+        layout.setContentsMargins(40, 20, 40, 40)
+
         # Title - "Search Videos"
         self.title_label = QLabel("Search Videos")
         self.title_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.title_label.setObjectName("mainTitle")
-        content_layout.addWidget(self.title_label)
-        
-        # Search bar (pill-shaped)
+        layout.addWidget(self.title_label)
+
+        # Search bar
         search_container = self._create_search_bar()
-        content_layout.addWidget(search_container, alignment=Qt.AlignmentFlag.AlignCenter)
-        
+        layout.addWidget(search_container, alignment=Qt.AlignmentFlag.AlignCenter)
+
         # Results area (grid or empty state)
         self.results_container = QWidget()
         self.results_layout = QVBoxLayout()
         self.results_layout.setContentsMargins(0, 0, 0, 0)
         self.results_container.setLayout(self.results_layout)
-        
-        # Empty state label
+
+        # Upload zone frame with dashed border (shown as empty state)
+        self.upload_zone = QFrame()
+        self.upload_zone.setObjectName("uploadZone")
+        self.upload_zone.setFixedSize(420, 280)
+
+        zone_layout = QVBoxLayout()
+        zone_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        zone_layout.setSpacing(16)
+        zone_layout.setContentsMargins(40, 30, 40, 30)
+
+        # Upload arrow icon
+        icon_path = Path(__file__).parent.parent / "assets" / "cloud-upload.svg"
+        if icon_path.exists():
+            self.upload_icon = QSvgWidget(str(icon_path))
+            self.upload_icon.setFixedSize(60, 60)
+        else:
+            self.upload_icon = QLabel("↑")
+            self.upload_icon.setStyleSheet("font-size: 48px; color: #7B8CA0;")
+            self.upload_icon.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        zone_layout.addWidget(self.upload_icon, alignment=Qt.AlignmentFlag.AlignCenter)
+
+        # Browse button (pill-shaped, orange)
+        self.btn_browse = QPushButton("Browse")
+        self.btn_browse.setObjectName("browseButton")
+        self.btn_browse.setFixedSize(180, 44)
+        self.btn_browse.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_browse.clicked.connect(self._show_upload_dialog)
+        zone_layout.addWidget(self.btn_browse, alignment=Qt.AlignmentFlag.AlignCenter)
+
+        # Helper text
+        helper_text = QLabel("Add files to your Media Pool to begin")
+        helper_text.setObjectName("uploadHelperText")
+        helper_text.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        zone_layout.addWidget(helper_text)
+
+        self.upload_zone.setLayout(zone_layout)
+        self.results_layout.addWidget(self.upload_zone, alignment=Qt.AlignmentFlag.AlignCenter)
+
+        # Empty state label (hidden by default, used after search)
         self.empty_state_label = QLabel("no queries made yet.")
         self.empty_state_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.empty_state_label.setObjectName("emptyState")
+        self.empty_state_label.setVisible(False)
         self.results_layout.addWidget(self.empty_state_label)
-        
+
         # Scroll area for results
         self.results_scroll = QScrollArea()
         self.results_scroll.setWidgetResizable(True)
         self.results_scroll.setFrameShape(QFrame.Shape.NoFrame)
         self.results_scroll.setWidget(self.results_container)
-        content_layout.addWidget(self.results_scroll, 1)
-        
-        content.setLayout(content_layout)
+        layout.addWidget(self.results_scroll, 1)
+
+        content.setLayout(layout)
         return content
     
     def _update_ui_for_auth_state(self):
@@ -270,7 +310,7 @@ class ClipABitApp(QWidget):
         
         # Toggle visibility of content areas
         self.get_started_content.setVisible(not is_logged_in)
-        self.search_content.setVisible(is_logged_in)
+        self.upload_content.setVisible(is_logged_in)
         
         # Ensure header elements remain visible regardless of login state
         # so the 'Sign In' button is accessible.
@@ -565,7 +605,7 @@ class ClipABitApp(QWidget):
         return container
     
     def _clear_search(self):
-        """Clear the search input and results, returning to initial state."""
+        """Clear the search input and results, returning to initial state with upload zone."""
         print("[Search] Clear button clicked")
         self._search_generation += 1  # Invalidate pending thumbnail loads
         self.search_input.clear()
@@ -577,16 +617,53 @@ class ClipABitApp(QWidget):
             elif item.layout():
                 self._clear_layout(item.layout())
             self.results_layout.removeItem(item)
-        # Re-create the empty state label fresh in the layout
-        self.empty_state_label = QLabel("no queries made yet.")
-        self.empty_state_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.empty_state_label.setObjectName("emptyState")
-        self.results_layout.addWidget(self.empty_state_label)
+        # Re-create the upload zone as the empty state
+        self._rebuild_upload_zone()
         self.status_label.setText("Ready")
+
+    def _rebuild_upload_zone(self):
+        """Re-create the upload zone widget in the results layout."""
+        self.upload_zone = QFrame()
+        self.upload_zone.setObjectName("uploadZone")
+        self.upload_zone.setFixedSize(420, 280)
+
+        zone_layout = QVBoxLayout()
+        zone_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        zone_layout.setSpacing(16)
+        zone_layout.setContentsMargins(40, 30, 40, 30)
+
+        icon_path = Path(__file__).parent.parent / "assets" / "cloud-upload.svg"
+        if icon_path.exists():
+            self.upload_icon = QSvgWidget(str(icon_path))
+            self.upload_icon.setFixedSize(60, 60)
+        else:
+            self.upload_icon = QLabel("↑")
+            self.upload_icon.setStyleSheet("font-size: 48px; color: #7B8CA0;")
+            self.upload_icon.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        zone_layout.addWidget(self.upload_icon, alignment=Qt.AlignmentFlag.AlignCenter)
+
+        btn_browse = QPushButton("Browse")
+        btn_browse.setObjectName("browseButton")
+        btn_browse.setFixedSize(180, 44)
+        btn_browse.setCursor(Qt.CursorShape.PointingHandCursor)
+        btn_browse.clicked.connect(self._show_upload_dialog)
+        zone_layout.addWidget(btn_browse, alignment=Qt.AlignmentFlag.AlignCenter)
+
+        helper_text = QLabel("Add files to your Media Pool to begin")
+        helper_text.setObjectName("uploadHelperText")
+        helper_text.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        zone_layout.addWidget(helper_text)
+        self.upload_zone.setLayout(zone_layout)
+        self.results_layout.addWidget(self.upload_zone, alignment=Qt.AlignmentFlag.AlignCenter)
+        # Re-apply stylesheet so new widgets pick up styles
+        self._apply_theme()
     
     def _on_search_text_changed(self, text):
-        """Show/hide clear button based on search input text."""
+        """Show/hide clear button and upload zone based on search input text."""
         self.btn_clear_search.setVisible(bool(text))
+        # Hide upload zone as soon as user starts typing
+        if hasattr(self, 'upload_zone') and self.upload_zone:
+            self.upload_zone.setVisible(not bool(text))
 
     def _build_namespace(self) -> str:
         """Build the namespace string from device id and project name."""
@@ -843,6 +920,50 @@ class ClipABitApp(QWidget):
             /* Search content container */
             QWidget#searchContent {{
                 background-color: {t['background']};
+            }}
+            
+            /* Upload content container */
+            QWidget#uploadContent {{
+                background-color: {t['background']};
+            }}
+            
+            /* Upload zone with dashed border */
+            QFrame#uploadZone {{
+                background-color: {t['upload_zone_bg']};
+                border: 2px dashed {t['upload_zone_border']};
+                border-radius: 2px;
+            }}
+            
+            /* Browse button (pill-shaped) */
+            QPushButton#browseButton {{
+                background-color: {t['browse_btn_bg']};
+                color: {t['browse_btn_text']};
+                border: none;
+                border-radius: 25px;
+                font-size: 14px;
+                font-weight: 500;
+            }}
+            QPushButton#browseButton:hover {{
+                background-color: {t['accent_hover']};
+            }}
+
+            /* Upload helper text */
+            QLabel#uploadHelperText {{
+                color: #979797;
+                font-size: 13px;
+            }}
+
+            /* Help bubble button */
+            QPushButton#helpBubble {{
+                background-color: #4A4B52;
+                color: #FFFFFF;
+                border: none;
+                border-radius: 10px;
+                font-size: 12px;
+                font-weight: bold;
+            }}
+            QPushButton#helpBubble:hover {{
+                background-color: #5A5B62;
             }}
         """)
     
@@ -1434,8 +1555,11 @@ class ClipABitApp(QWidget):
                 # Clear nested layouts
                 self._clear_layout(item.layout())
                 
-        # Hide empty state label
-        self.empty_state_label.hide()
+        # Hide empty state / upload zone if still present
+        if self.empty_state_label and self.empty_state_label.parent():
+            self.empty_state_label.hide()
+        if hasattr(self, 'upload_zone') and self.upload_zone and self.upload_zone.parent():
+            self.upload_zone.hide()
                 
         if not results:
             no_results = QLabel("No results found for your query.")
