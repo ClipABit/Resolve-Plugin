@@ -1309,17 +1309,8 @@ class ClipABitApp(QWidget):
         return False
         
     def _delete_backend_entry(self, filename: str, hashed_identifier: str, namespace: str):
-        """Request backend deletion for a file's Pinecone data (non-blocking)."""
-        if not self.auth_manager or not self.auth_manager.is_logged_in():
-            return
-        print(f"[Delete] Requesting backend delete for {filename}")
-        self._network.delete(
-            Config.DELETE_API_URL,
-            params={"namespace": namespace, "hashed_identifier": hashed_identifier},
-            timeout=10,
-            on_success=lambda status, data: print(f"[Delete] OK for {filename}: {status}"),
-            on_error=lambda msg: print(f"[Delete] Failed for {filename}: {msg}"),
-        )
+        """Backend delete is deactivated — will be reimplemented as a separate feature."""
+        print(f"[Delete] DEACTIVATED — skipping backend delete for {filename}")
             
     def _process_upload_queue(self):
         """Process the next file in the upload queue."""
@@ -1346,9 +1337,17 @@ class ClipABitApp(QWidget):
         self.status_label.setText(f"Starting upload: {filename} ({remaining} remaining)")
         
         namespace = self._build_namespace()
+        project_id = self.get_project_id() or ""
+        hashed_id = get_hashed_identifier(file_info['filepath'])
+        file_info['hashed_identifier'] = hashed_id
+        file_info['project_id'] = project_id
 
         # Start uploader (non-blocking — uses QNetworkAccessManager internally)
-        self.current_uploader = FileUploader(file_info, namespace, network=self._network, parent=self)
+        self.current_uploader = FileUploader(
+            file_info, namespace,
+            hashed_identifier=hashed_id, project_id=project_id,
+            network=self._network, parent=self,
+        )
         self.current_uploader.upload_started.connect(self._on_upload_started)
         self.current_uploader.upload_progress.connect(self._on_upload_progress)
         self.current_uploader.upload_success.connect(self._on_upload_success)
@@ -1383,15 +1382,25 @@ class ClipABitApp(QWidget):
                 'filepath': filepath,
                 'file_hash': file_hash,
                 'status': 'processing',
-                'namespace': namespace
+                'namespace': namespace,
+                'hashed_identifier': self.current_upload.get('hashed_identifier', '') if self.current_upload else '',
+                'project_id': self.current_upload.get('project_id', '') if self.current_upload else '',
             }
-            
+
             self.current_jobs[job_id] = job_info
             self.job_tracker.add_job(job_id, job_info)
             self._update_jobs_display()
-            self._update_file_status()  # Update UI to reflect changes
-            
-            self.status_label.setText(f"Upload started: {filename}")
+            self._update_file_status()
+
+            # Show quota info if available
+            vector_count = result.get("vector_count")
+            vector_quota = result.get("vector_quota")
+            if vector_count is not None and vector_quota is not None:
+                self.status_label.setText(
+                    f"Upload started: {filename} (vectors: {vector_count}/{vector_quota})"
+                )
+            else:
+                self.status_label.setText(f"Upload started: {filename}")
             
             # Continue with next upload
             self._on_upload_completed(True)
@@ -1423,27 +1432,21 @@ class ClipABitApp(QWidget):
                 filepath = job_info['filepath']
                 file_hash = job_info['file_hash']
                 namespace = job_info['namespace']
-                hashed_identifier = get_hashed_identifier(filepath, namespace, filename)
-                expected_vectors = None
+                hashed_identifier = job_info.get('hashed_identifier') or get_hashed_identifier(filepath)
+                vector_count = None
                 try:
                     if isinstance(result, dict) and result.get("chunks") is not None:
-                        expected_vectors = int(result.get("chunks"))
+                        vector_count = int(result.get("chunks"))
                 except (TypeError, ValueError):
-                    expected_vectors = None
-                
-                # Mark file as processed (keep existing tracking)
+                    pass
+
                 self.processed_files[file_hash] = {
                     'filename': filename,
                     'filepath': filepath,
-                    'job_id': job_id,
                     'namespace': namespace,
                     'hashed_identifier': hashed_identifier,
+                    'vector_count': vector_count,
                     'processed_at': time.time(),
-                    'result': result,
-                    'backend_miss_count': 0,
-                    'last_backend_check': None,
-                    'expected_vector_count': expected_vectors,
-                    'vector_count': expected_vectors
                 }
                 self._save_processed_files()
                 
@@ -1536,9 +1539,10 @@ class ClipABitApp(QWidget):
             self.status_label.setText("Search failed")
             self.btn_search.setEnabled(True)
 
+        project_id = self.get_project_id() or ""
         self._network.get(
             Config.SEARCH_API_URL,
-            params={"query": query, "namespace": namespace},
+            params={"query": query, "namespace": namespace, "project_id": project_id},
             timeout=30,
             on_success=on_success,
             on_error=on_error,
@@ -2232,7 +2236,29 @@ class ClipABitApp(QWidget):
             pass
 
         return None
-    
+
+    def get_project_id(self) -> Optional[str]:
+        """Return the Resolve project's unique ID, or None if unavailable.
+
+        Uses GetUniqueId() (Resolve 18.0b3+) which is immutable across renames.
+        Falls back to a SHA-256 hash of the project name if unavailable.
+        """
+        if not project:
+            return None
+        try:
+            fn = getattr(project, "GetUniqueId", None)
+            if callable(fn):
+                uid = fn()
+                if uid:
+                    return str(uid)
+        except Exception:
+            pass
+        # Fallback: hash the project name (changes if user renames the project)
+        name = self.get_project_name()
+        if name:
+            return hashlib.sha256(name.encode()).hexdigest()[:36]
+        return None
+
     def _show_processed_files(self):
         """Show processed files in a dialog window."""
         if not self.processed_files:
@@ -2319,7 +2345,7 @@ class ClipABitApp(QWidget):
             QMessageBox.critical(self, "Error", f"Failed to show processed files:\n{str(e)}")
     
     def _clear_processed_files(self):
-        """Clear all processed files tracking."""
+        """Clear local processed files tracking."""
         if not self.processed_files:
             QMessageBox.information(self, "Clear Processed Files", "No processed files to clear.")
             return
@@ -2327,80 +2353,42 @@ class ClipABitApp(QWidget):
         reply = QMessageBox.question(
             self,
             "Clear Processed Files",
-            f"This will clear tracking for {len(self.processed_files)} processed files.\n\n"
-            "Do you also want to delete their vectors from Pinecone?\n\n"
-            "Yes = delete Pinecone + local\nNo = delete Pinecone only (keep local)\nCancel = do nothing",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No | QMessageBox.StandardButton.Cancel
+            f"Clear tracking for {len(self.processed_files)} processed files?\n\n"
+            "This only clears local tracking — backend data is retained.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
         )
-        
-        if reply == QMessageBox.StandardButton.Cancel:
-            return
 
         if reply == QMessageBox.StandardButton.Yes:
-            # Delete from backend before clearing local
-            for _, info in list(self.processed_files.items()):
-                filename = info.get("filename", "")
-                filepath = info.get("filepath", "")
-                namespace = info.get("namespace") or self._build_namespace()
-                hashed_identifier = info.get("hashed_identifier") or get_hashed_identifier(filepath, namespace, filename)
-                if filename and hashed_identifier:
-                    self._delete_backend_entry(filename, hashed_identifier, namespace)
-
             self.processed_files.clear()
             self._save_processed_files()
             self._update_file_status()
             QMessageBox.information(self, "Cleared", "Processed files tracking has been cleared.")
-            print("Processed files tracking cleared")
-        elif reply == QMessageBox.StandardButton.No:
-            # Delete from backend only, keep local so verification can prune
-            for _, info in list(self.processed_files.items()):
-                filename = info.get("filename", "")
-                filepath = info.get("filepath", "")
-                namespace = info.get("namespace") or self._build_namespace()
-                hashed_identifier = info.get("hashed_identifier") or get_hashed_identifier(filepath, namespace, filename)
-                if filename and hashed_identifier:
-                    self._delete_backend_entry(filename, hashed_identifier, namespace)
-
-            QMessageBox.information(
-                self,
-                "Deleted from Pinecone",
-                "Pinecone data deleted. Local tracking kept for verification."
-            )
-            print("Pinecone data deleted; local tracking kept")
+            print("[Files] Processed files tracking cleared")
             
     def _run_consistency_check(self, reason: str):
         """Sync local tracking with backend and remove dangling entries."""
         if not self.processed_files:
-            return {"checked": 0, "removed": 0, "updated": 0}
+            return {"checked": 0, "removed": 0}
 
         removed_count = 0
         checked_count = 0
-        updated_count = 0
-        now = time.time()
 
         for file_hash, info in list(self.processed_files.items()):
-            filename = info.get("filename", "")
             filepath = info.get("filepath", "")
-
             checked_count += 1
 
             if filepath and not os.path.exists(filepath):
-                print(f"[Consistency] Missing local file: {filename}. Removing local record.")
+                print(f"[Consistency] Missing local file: {info.get('filename', '')}. Removing local record.")
                 del self.processed_files[file_hash]
                 removed_count += 1
-                continue
 
-            if filename:
-                info['last_backend_check'] = now
-                updated_count += 1
-
-        if removed_count > 0 or updated_count > 0:
+        if removed_count > 0:
             self._save_processed_files()
             self._update_file_status()
 
         if checked_count > 0:
-            print(f"[Consistency] {reason}: checked {checked_count}, removed {removed_count}, updated {updated_count}")
-        return {"checked": checked_count, "removed": removed_count, "updated": updated_count}
+            print(f"[Consistency] {reason}: checked {checked_count}, removed {removed_count}")
+        return {"checked": checked_count, "removed": removed_count}
 
     def closeEvent(self, event):
         """Handle window close event."""
