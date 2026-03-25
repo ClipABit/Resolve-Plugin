@@ -29,10 +29,13 @@ class Config:
     SEARCH_API_URL = f"{SEARCH_BASE_URL}/search"
     UPLOAD_API_URL = f"{SERVER_BASE_URL}/upload"
     STATUS_API_URL = f"{SERVER_BASE_URL}/status"
-    DELETE_API_URL = f"{SERVER_BASE_URL}/videos"
-    
     # Timeouts and delays
     UPLOAD_TIMEOUT = 300
     STATUS_CHECK_TIMEOUT = 10
     STATUS_CHECK_INTERVAL = 2
     QUEUE_DELAY = 1000  # milliseconds
+
+    # Repo information (for auto-update)
+    OWNER = "ClipABit"
+    REPO = "Resolve-Plugin"
+    RELEASE_TAG = "v1.2.0"

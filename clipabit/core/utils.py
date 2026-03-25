@@ -73,7 +73,10 @@ def get_file_hash(filepath: str) -> str:
     except Exception:
         return hashlib.md5(filepath.encode()).hexdigest()
 
-def get_hashed_identifier(filepath: str, namespace: str, filename: str) -> str:
-    """Match backend identifier generation for plugin uploads."""
-    identifier_source = filepath if filepath else f"{namespace}/{filename}"
-    return hashlib.sha256(identifier_source.encode()).hexdigest()
+def get_hashed_identifier(filepath: str) -> str:
+    """SHA-256 hash of a file's content. Used as the backend video identifier."""
+    h = hashlib.sha256()
+    with open(filepath, "rb") as f:
+        for chunk in iter(lambda: f.read(8 * 1024 * 1024), b""):
+            h.update(chunk)
+    return h.hexdigest()

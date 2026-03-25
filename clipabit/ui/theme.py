@@ -21,6 +21,10 @@ class Theme:
         'logo_bg': '#FFFFFF',
         'logo_inner': '#979797',
         'logo_play': '#26272E',
+        'upload_zone_bg': '#292C38',
+        'upload_zone_border': '#7B8CA0',
+        'browse_btn_bg': '#FAAF04',
+        'browse_btn_text': '#FFFFFF',
     }
     
     # Current theme (always dark)

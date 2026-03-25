@@ -4,10 +4,12 @@ A semantic video search plugin for DaVinci Resolve that allows you to search thr
 
 ## Features
 
-- **Semantic Video Search**: Search your media pool using natural language (e.g., "woman walking", "car driving")
+- **Semantic Video Search**: Search your media pool using natural language (e.g., "woman walking", "car driving"), scoped to the current Resolve project
 - **Video Preview & Trim**: Preview search results with a built-in video player and trim in/out points before inserting
-- **Smart Upload Management**: Track which files have been processed and upload only new files
+- **Smart Upload Management**: Track which files have been processed and upload only new files. Content-based file hashing ensures videos are identified consistently regardless of file path
 - **Non-blocking Networking**: All HTTP I/O (upload, search, job polling) runs on Qt's event loop via `QNetworkAccessManager` — no threads, no UI freezes, fully compatible with Resolve's fuscript.exe
+- **Project-scoped Search**: Search results are filtered by the current Resolve project using `GetUniqueId()` (Resolve 18.0b3+), so each project's media stays separate
+- **Quota Tracking**: Upload responses include vector count and quota info, displayed in the status bar
 - **Background Job Tracking**: Monitor upload and processing jobs with real-time status updates
 - **Timeline Integration**: Add search results directly to your timeline with precise timing
 
@@ -165,6 +167,9 @@ This watches the plugin source and syncs both:
 | `CLIPABIT_AUTH0_CLIENT_ID` | Yes (for sign-in) | none | Auth0 application client ID |
 | `CLIPABIT_AUTH0_AUDIENCE` | Yes (for sign-in) | none | API audience used in token requests |
 | `CLIPABIT_ENVIRONMENT` | No | `dev` | `dev`, `staging`, `prod` |
+| `CLIPABIT_SERVER_URL` | No | auto (from environment) | Override base URL for upload/status endpoints |
+| `CLIPABIT_SEARCH_URL` | No | auto (from environment) | Override base URL for search endpoint |
+| `CLIPABIT_DEV_NAME` | No | `dev` | Dev server name prefix (dev environment only) |
 
 ### File Locations
 
@@ -233,7 +238,22 @@ This watches the plugin source and syncs both:
 ## Architecture
 
 - **PyQt6 Interface**: Dark-themed UI with non-blocking networking via `QNetworkAccessManager`
-- **No Threads**: All HTTP calls (upload, search, job polling, delete) run on Qt's event loop — safe inside Resolve's fuscript.exe which crashes on `QThread.start()`
-- **Modal.com Backend**: Serverless video processing
-- **Pinecone Vector Database**: Semantic search with CLIP embeddings
-- **Cloudflare R2**: Video file storage
+- **No Threads**: All HTTP calls (upload, search, job polling) run on Qt's event loop — safe inside Resolve's fuscript.exe which crashes on `QThread.start()`
+- **Modal.com Backend**: Serverless video processing with per-user Pinecone namespaces
+- **Pinecone Vector Database**: Semantic search with CLIP embeddings, scoped by project via `project_id` metadata filtering
+- **Content-based Identification**: Videos are identified by SHA-256 hash of file content (`hashed_identifier`), ensuring consistent identification across file moves/renames
+- **Local Storage**: Minimal `processed_files.json` tracks uploaded files with filename, filepath, namespace, hashed_identifier, vector_count, and timestamp
+
+### Upload Flow
+
+1. Plugin computes `hashed_identifier` (SHA-256 of file content, 8MB chunked reads)
+2. Retrieves `project_id` from Resolve's `GetUniqueId()` (falls back to project name hash)
+3. Sends file + `namespace` + `hashed_identifier` + `project_id` to backend
+4. Backend assigns namespace based on user identity, stores vectors with `project_id` metadata
+5. Upload response includes `vector_count` / `vector_quota` for quota display
+
+### Search Flow
+
+1. Plugin sends query + `namespace` + `project_id` to search endpoint
+2. Backend filters Pinecone results by `project_id` so results are scoped to the current Resolve project
+3. Results include video file paths and timestamp ranges for timeline insertion
