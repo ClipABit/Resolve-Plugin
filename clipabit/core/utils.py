@@ -1,41 +1,25 @@
 import os
 import json
 import hashlib
+import platform
 from pathlib import Path
 from typing import Dict
 
 
 def get_storage_path() -> Path:
-    """Get path for local storage, robust to Resolve environment."""
-    try:
-        # standard approach
-        script_path = Path(__file__).resolve()
-    except NameError:
-        # Resolve 'script' environment
-        import inspect
-        try:
-            script_path = Path(inspect.getfile(inspect.currentframe())).resolve()
-        except Exception:
-            # Fallback to user home if we can't find our own path
-            # This ensures we always have a writable location
-            user_home = Path(os.path.expanduser("~"))
-            storage_dir = user_home / ".clipabit" / "localstorage"
-            storage_dir.mkdir(parents=True, exist_ok=True)
-            return storage_dir / "processed_files.json"
+    """Get path for processed files — uses platform app data dir (survives updates)."""
+    system = platform.system()
+    if system == "Windows":
+        base = os.getenv("APPDATA") or str(Path.home())
+        storage_dir = Path(base) / "ClipABit"
+    elif system == "Darwin":
+        storage_dir = Path.home() / "Library" / "Application Support" / "ClipABit"
+    else:
+        xdg = os.getenv("XDG_CONFIG_HOME")
+        base = xdg if xdg else str(Path.home() / ".config")
+        storage_dir = Path(base) / "clipabit"
 
-    # If we found the script path, store relative to it (but ensure parents exist)
-    # We navigate up from plugin/clipabit/core/utils.py to plugin/clipabit/localstorage
-    # script_path.parent = core
-    # script_path.parent.parent = clipabit
-    storage_dir = script_path.parent.parent / "localstorage"
-    try:
-        storage_dir.mkdir(parents=True, exist_ok=True)
-    except PermissionError:
-        # Fallback if package dir is read-only
-        user_home = Path(os.path.expanduser("~"))
-        storage_dir = user_home / ".clipabit" / "localstorage"
-        storage_dir.mkdir(parents=True, exist_ok=True)
-        
+    storage_dir.mkdir(parents=True, exist_ok=True)
     return storage_dir / "processed_files.json"
 
 def load_processed_files(storage_path: Path = None) -> Dict[str, Dict]:

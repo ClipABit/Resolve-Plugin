@@ -77,7 +77,7 @@ def sync_plugin(src_root: Path, paths: dict):
         dst_modules = dst_modules_parent / "clipabit"
         if dst_modules.exists():
             shutil.rmtree(dst_modules)
-        shutil.copytree(pkg_src, dst_modules)
+        shutil.copytree(pkg_src, dst_modules, ignore=shutil.ignore_patterns('localstorage'))
         logger.info("Synced Package: %s -> %s", pkg_src.name, dst_modules)
 
 
