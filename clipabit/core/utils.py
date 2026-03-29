@@ -59,6 +59,8 @@ def get_file_hash(filepath: str) -> str:
 
 def get_hashed_identifier(filepath: str) -> str:
     """SHA-256 hash of a file's content. Used as the backend video identifier."""
+    if not filepath:
+        raise ValueError("get_hashed_identifier called with empty filepath")
     h = hashlib.sha256()
     with open(filepath, "rb") as f:
         for chunk in iter(lambda: f.read(8 * 1024 * 1024), b""):

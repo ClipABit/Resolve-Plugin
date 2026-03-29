@@ -1814,11 +1814,11 @@ class ClipABitApp(QWidget):
             for clip_filename, clip_info in self.clip_map.items():
                 clip_filename_lower = clip_filename.lower()
                 if filename_lower in clip_filename_lower or clip_filename_lower in filename_lower:
-                    matching_clip_info = clip_info
                     if isinstance(clip_info, list):
-                        matching_clip = clip_info[0]['media_pool_item']
+                        matching_clip_info = clip_info[0]
                     else:
-                        matching_clip = clip_info['media_pool_item']
+                        matching_clip_info = clip_info
+                    matching_clip = matching_clip_info['media_pool_item']
                     break
                 
         if not matching_clip:
@@ -1878,11 +1878,15 @@ class ClipABitApp(QWidget):
 
         # Add to timeline
         try:
-            # Ensure current folder is the root (some Resolve versions require it)
+            # Set current folder to the clip's parent folder for subfolder support
             try:
-                root_folder = media_pool.GetRootFolder()
-                if root_folder:
-                    media_pool.SetCurrentFolder(root_folder)
+                clip_folder = matching_clip_info.get('folder') if matching_clip_info else None
+                if clip_folder:
+                    media_pool.SetCurrentFolder(clip_folder)
+                else:
+                    root_folder = media_pool.GetRootFolder()
+                    if root_folder:
+                        media_pool.SetCurrentFolder(root_folder)
             except Exception:
                 pass
 
@@ -1900,11 +1904,7 @@ class ClipABitApp(QWidget):
             if clip_frames is None:
                 clip_frames = 1000
 
-            fps = 24.0
-            if isinstance(matching_clip_info, dict):
-                fps = matching_clip_info.get("fps") or 24.0
-            elif isinstance(matching_clip_info, list) and matching_clip_info:
-                fps = matching_clip_info[0].get("fps") or 24.0
+            fps = (matching_clip_info.get("fps") or 24.0) if matching_clip_info else 24.0
 
             start_frame = int(float(start_time) * float(fps))
             end_frame = int(float(end_time) * float(fps))
@@ -2073,7 +2073,8 @@ class ClipABitApp(QWidget):
                 return []
             collected = []
             try:
-                collected.extend(folder.GetClipList() or [])
+                for clip in (folder.GetClipList() or []):
+                    collected.append((clip, folder))
             except Exception:
                 pass
             for sub in _get_subfolders(folder):
@@ -2081,18 +2082,29 @@ class ClipABitApp(QWidget):
             return collected
 
         root_folder = media_pool.GetRootFolder()
-        clips = _collect_clips(root_folder)
+        clips_with_folders = _collect_clips(root_folder)
         if debug:
-            print(f"[MediaPool] Total clips found (pre-filter): {len(clips)}")
-
-        # Apply same filter as the append action
-        filtered = [c for c in clips if c and c.GetClipProperty("Type") and "Video" in c.GetClipProperty("Type")]
-        if debug:
-            print(f"[MediaPool] Video clips after filter: {len(filtered)}")
+            print(f"[MediaPool] Total clips found (pre-filter): {len(clips_with_folders)}")
 
         mapping = {}
-        for clip in filtered:
-            # Prefer File Path -> filename, fall back to clip name
+        for clip, folder in clips_with_folders:
+            if not clip:
+                continue
+
+            # Set folder context before any GetClipProperty calls
+            try:
+                media_pool.SetCurrentFolder(folder)
+            except Exception:
+                pass
+
+            # Apply same filter as the append action
+            try:
+                clip_type = clip.GetClipProperty("Type")
+            except Exception:
+                clip_type = None
+            if not clip_type or "Video" not in clip_type:
+                continue
+
             try:
                 file_path = clip.GetClipProperty("File Path") or clip.GetClipProperty("FilePath")
             except Exception:
@@ -2101,7 +2113,6 @@ class ClipABitApp(QWidget):
             if file_path:
                 filename = os.path.basename(file_path)
             else:
-                # Some MediaPoolItem objects provide a Name
                 try:
                     filename = clip.GetName() or "<unnamed>"
                 except Exception:
@@ -2109,7 +2120,7 @@ class ClipABitApp(QWidget):
 
             fps = self._extract_clip_fps(clip)
 
-            entry = {"media_pool_item": clip, "fps": fps, "filepath": file_path}
+            entry = {"media_pool_item": clip, "fps": fps, "filepath": file_path, "folder": folder}
 
             # Handle duplicate filenames by collecting into a list
             if filename in mapping:
@@ -2120,8 +2131,14 @@ class ClipABitApp(QWidget):
             else:
                 mapping[filename] = entry
 
+        # Restore media pool folder to root
+        try:
+            media_pool.SetCurrentFolder(root_folder)
+        except Exception:
+            pass
+
         return mapping
-        
+
     def _refresh_media_pool(self, debug: bool = False):
         """Refresh media pool and update file status."""
         if not resolve:
