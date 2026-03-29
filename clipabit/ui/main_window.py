@@ -2073,7 +2073,8 @@ class ClipABitApp(QWidget):
                 return []
             collected = []
             try:
-                collected.extend(folder.GetClipList() or [])
+                for clip in (folder.GetClipList() or []):
+                    collected.append((clip, folder))
             except Exception:
                 pass
             for sub in _get_subfolders(folder):
@@ -2081,18 +2082,29 @@ class ClipABitApp(QWidget):
             return collected
 
         root_folder = media_pool.GetRootFolder()
-        clips = _collect_clips(root_folder)
+        clips_with_folders = _collect_clips(root_folder)
         if debug:
-            print(f"[MediaPool] Total clips found (pre-filter): {len(clips)}")
-
-        # Apply same filter as the append action
-        filtered = [c for c in clips if c and c.GetClipProperty("Type") and "Video" in c.GetClipProperty("Type")]
-        if debug:
-            print(f"[MediaPool] Video clips after filter: {len(filtered)}")
+            print(f"[MediaPool] Total clips found (pre-filter): {len(clips_with_folders)}")
 
         mapping = {}
-        for clip in filtered:
-            # Prefer File Path -> filename, fall back to clip name
+        for clip, folder in clips_with_folders:
+            if not clip:
+                continue
+
+            # Set folder context before any GetClipProperty calls
+            try:
+                media_pool.SetCurrentFolder(folder)
+            except Exception:
+                pass
+
+            # Apply same filter as the append action
+            try:
+                clip_type = clip.GetClipProperty("Type")
+            except Exception:
+                clip_type = None
+            if not clip_type or "Video" not in clip_type:
+                continue
+
             try:
                 file_path = clip.GetClipProperty("File Path") or clip.GetClipProperty("FilePath")
             except Exception:
@@ -2101,7 +2113,6 @@ class ClipABitApp(QWidget):
             if file_path:
                 filename = os.path.basename(file_path)
             else:
-                # Some MediaPoolItem objects provide a Name
                 try:
                     filename = clip.GetName() or "<unnamed>"
                 except Exception:
@@ -2109,7 +2120,7 @@ class ClipABitApp(QWidget):
 
             fps = self._extract_clip_fps(clip)
 
-            entry = {"media_pool_item": clip, "fps": fps, "filepath": file_path}
+            entry = {"media_pool_item": clip, "fps": fps, "filepath": file_path, "folder": folder}
 
             # Handle duplicate filenames by collecting into a list
             if filename in mapping:
@@ -2120,8 +2131,14 @@ class ClipABitApp(QWidget):
             else:
                 mapping[filename] = entry
 
+        # Restore media pool folder to root
+        try:
+            media_pool.SetCurrentFolder(root_folder)
+        except Exception:
+            pass
+
         return mapping
-        
+
     def _refresh_media_pool(self, debug: bool = False):
         """Refresh media pool and update file status."""
         if not resolve:
