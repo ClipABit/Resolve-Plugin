@@ -1,3 +1,9 @@
+## [1.4.0-staging.1](https://github.com/ClipABit/Resolve-Plugin/compare/v1.3.0...v1.4.0-staging.1) (2026-03-29)
+
+### Features
+
+* moves file upload away from module ([b086b20](https://github.com/ClipABit/Resolve-Plugin/commit/b086b205106a128d791f680a10780dcfe279edea))
+
 ## [1.3.0-staging.2](https://github.com/ClipABit/Resolve-Plugin/compare/v1.3.0-staging.1...v1.3.0-staging.2) (2026-03-27)
 
 ### Features
