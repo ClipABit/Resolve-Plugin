@@ -1814,11 +1814,11 @@ class ClipABitApp(QWidget):
             for clip_filename, clip_info in self.clip_map.items():
                 clip_filename_lower = clip_filename.lower()
                 if filename_lower in clip_filename_lower or clip_filename_lower in filename_lower:
-                    matching_clip_info = clip_info
                     if isinstance(clip_info, list):
-                        matching_clip = clip_info[0]['media_pool_item']
+                        matching_clip_info = clip_info[0]
                     else:
-                        matching_clip = clip_info['media_pool_item']
+                        matching_clip_info = clip_info
+                    matching_clip = matching_clip_info['media_pool_item']
                     break
                 
         if not matching_clip:
@@ -1878,11 +1878,15 @@ class ClipABitApp(QWidget):
 
         # Add to timeline
         try:
-            # Ensure current folder is the root (some Resolve versions require it)
+            # Set current folder to the clip's parent folder for subfolder support
             try:
-                root_folder = media_pool.GetRootFolder()
-                if root_folder:
-                    media_pool.SetCurrentFolder(root_folder)
+                clip_folder = matching_clip_info.get('folder') if matching_clip_info else None
+                if clip_folder:
+                    media_pool.SetCurrentFolder(clip_folder)
+                else:
+                    root_folder = media_pool.GetRootFolder()
+                    if root_folder:
+                        media_pool.SetCurrentFolder(root_folder)
             except Exception:
                 pass
 
@@ -1900,11 +1904,7 @@ class ClipABitApp(QWidget):
             if clip_frames is None:
                 clip_frames = 1000
 
-            fps = 24.0
-            if isinstance(matching_clip_info, dict):
-                fps = matching_clip_info.get("fps") or 24.0
-            elif isinstance(matching_clip_info, list) and matching_clip_info:
-                fps = matching_clip_info[0].get("fps") or 24.0
+            fps = (matching_clip_info.get("fps") or 24.0) if matching_clip_info else 24.0
 
             start_frame = int(float(start_time) * float(fps))
             end_frame = int(float(end_time) * float(fps))
