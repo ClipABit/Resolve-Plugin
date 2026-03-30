@@ -38,4 +38,4 @@ class Config:
     # Repo information (for auto-update)
     OWNER = "ClipABit"
     REPO = "Resolve-Plugin"
-    RELEASE_TAG = "v1.2.0"
+    RELEASE_TAG = "1.3.0rc2"
