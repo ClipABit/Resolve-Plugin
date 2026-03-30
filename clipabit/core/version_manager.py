@@ -7,6 +7,7 @@ release and can download + apply updates from the repo zipball.
 
 import json
 import os
+import re
 import shutil
 import tempfile
 import zipfile
@@ -20,8 +21,32 @@ def _version_file_path() -> Path:
     return p / "version.json"
 
 
+def get_embedded_version() -> str | None:
+    """Read the version string directly from pyproject.toml if available."""
+    try:
+        install_dir = get_plugin_install_dir()
+        pyproject_path = install_dir / "pyproject.toml"
+        if pyproject_path.exists():
+            content = pyproject_path.read_text(encoding="utf-8")
+            # Simple regex to find version = "..."
+            match = re.search(r'^version\s*=\s*"([^"]+)"', content, re.MULTILINE)
+            if match:
+                return match.group(1)
+    except Exception as e:
+        print(f"[Version] Error reading pyproject.toml: {e}")
+    return None
+
+
 def load_installed_version(fallback_tag: str) -> str:
-    """Read the persisted version tag, falling back to Config.RELEASE_TAG."""
+    """Read the version. Prioritizes pyproject.toml, then version.json, then fallback."""
+    # 1. Try pyproject.toml (the source of truth for what's on disk)
+    embedded = get_embedded_version()
+    if embedded:
+        # Sync version.json if it's different or missing
+        save_installed_version(embedded)
+        return embedded
+
+    # 2. Try persisted version.json
     vf = _version_file_path()
     if vf.exists():
         try:
@@ -31,7 +56,8 @@ def load_installed_version(fallback_tag: str) -> str:
                 return tag
         except (json.JSONDecodeError, OSError):
             pass
-    # First run or corrupt file — seed from the compiled-in constant
+
+    # 3. Fallback to the provided constant (likely Config.RELEASE_TAG)
     save_installed_version(fallback_tag)
     return fallback_tag
 
@@ -39,38 +65,85 @@ def load_installed_version(fallback_tag: str) -> str:
 def save_installed_version(tag: str) -> None:
     """Persist the installed version tag to disk."""
     vf = _version_file_path()
+    try:
+        # Only write if it's actually different to avoid unnecessary IO
+        if vf.exists():
+            data = json.loads(vf.read_text(encoding="utf-8"))
+            if data.get("installed_version") == tag:
+                return
+    except Exception:
+        pass
+
     vf.write_text(json.dumps({"installed_version": tag}), encoding="utf-8")
     print(f"[Version] Saved installed version: {tag}")
 
 
 def parse_semver(tag: str) -> tuple:
-    """Parse 'v1.2.3' or 'v1.2.3-staging.4' into a comparable tuple.
+    """Parse 'v1.2.3', 'v1.2.3-staging.4', or PEP 440 '1.3.0rc2' into a comparable tuple.
 
     Returns (major, minor, patch, prerelease_order, pre_num) where
-    prerelease_order sorts: release (99) > staging (1) > beta (0) > alpha (-1).
-    A stable release like 'v1.2.0' sorts higher than 'v1.2.0-staging.5'.
+    prerelease_order sorts: release (99) > staging/rc (1) > beta (0) > alpha (-1).
     """
     clean = tag.lstrip("v")
+
+    # Handle PEP 440 pre-releases (e.g. 1.3.0rc2, 1.3rc2, 1.3.0a1)
+    # Convert them to SemVer-ish format for the unified logic below
+    pep_match = re.match(r"^(\d+\.\d+(?:\.\d+)?)(rc|a|b)(\d+)$", clean)
+    if pep_match:
+        base, label, num = pep_match.groups()
+        label_map = {"rc": "staging", "a": "alpha", "b": "beta"}
+        # Ensure base has 3 parts for consistent splitting later
+        if base.count(".") == 1:
+            base = f"{base}.0"
+        clean = f"{base}-{label_map[label]}.{num}"
+
     pre_part = None
     if "-" in clean:
         clean, pre_part = clean.split("-", 1)
+
     parts = clean.split(".")
-    major, minor, patch = int(parts[0]), int(parts[1]), int(parts[2]) if len(parts) > 2 else 0
+    try:
+        major = int(parts[0]) if len(parts) > 0 else 0
+        minor = int(parts[1]) if len(parts) > 1 else 0
+        patch = int(parts[2]) if len(parts) > 2 else 0
+    except (ValueError, IndexError):
+        major, minor, patch = 0, 0, 0
 
     if pre_part is None:
-        return (major, minor, patch, 99, 0)  # stable release ranks highest
+        return (major, minor, patch, 99, 0)
 
-    # pre_part like "staging.4", "alpha.1", "beta.2"
+    # pre_part like "staging.4", "rc.1", "alpha.1"
     pre_tokens = pre_part.split(".")
-    label = pre_tokens[0]
-    num = int(pre_tokens[1]) if len(pre_tokens) > 1 else 0
-    order = {"alpha": -1, "beta": 0, "staging": 1}.get(label, -2)
+    label = pre_tokens[0].lower()
+    num = 0
+    if len(pre_tokens) > 1:
+        try:
+            num = int(pre_tokens[1])
+        except ValueError:
+            pass
+            
+    # Map common labels to ordering
+    order_map = {
+        "alpha": -1, 
+        "beta": 0, 
+        "rc": 1, 
+        "staging": 1, 
+        "pre": 1
+    }
+    order = order_map.get(label, -2)
     return (major, minor, patch, order, num)
 
 
 def is_newer(remote_tag: str, local_tag: str) -> bool:
     """Return True if remote_tag is strictly newer than local_tag."""
     return parse_semver(remote_tag) > parse_semver(local_tag)
+
+
+def is_prerelease(tag: str) -> bool:
+    """Return True if the version tag represents a pre-release (staging, alpha, beta)."""
+    # parse_semver returns (major, minor, patch, order, num)
+    # order 99 is stable, everything else is pre-release
+    return parse_semver(tag)[3] < 99
 
 
 def get_plugin_install_dir() -> Path:
@@ -87,7 +160,7 @@ def get_plugin_install_dir() -> Path:
 
 
 def apply_update(zip_path: str, install_dir: Path) -> None:
-    """Extract clipabit/ and clipabit.py from the GitHub zipball into install_dir.
+    """Extract clipabit/, clipabit.py, and pyproject.toml from the GitHub zipball into install_dir.
 
     The zipball has a top-level folder like 'ClipABit-Resolve-Plugin-<sha>/'.
     We extract only the plugin files from it.
@@ -108,6 +181,7 @@ def apply_update(zip_path: str, install_dir: Path) -> None:
         # Verify expected files exist in the extracted content
         src_package = repo_root / "clipabit"
         src_entry = repo_root / "clipabit.py"
+        src_toml = repo_root / "pyproject.toml"
         if not src_package.is_dir():
             raise RuntimeError(f"clipabit/ not found in zipball at {src_package}")
 
@@ -125,6 +199,12 @@ def apply_update(zip_path: str, install_dir: Path) -> None:
             print(f"[Update] Copying new entry point to {dest_entry}")
             shutil.copy2(src_entry, dest_entry)
 
+        # Replace pyproject.toml so the new version is reflected locally
+        if src_toml.is_file():
+            dest_toml = install_dir / "pyproject.toml"
+            print(f"[Update] Copying new pyproject.toml to {dest_toml}")
+            shutil.copy2(src_toml, dest_toml)
+
         # Copy .env if present (contains config like Auth0 keys)
         src_env = repo_root / ".env"
         if src_env.is_file():
@@ -134,3 +214,4 @@ def apply_update(zip_path: str, install_dir: Path) -> None:
                 shutil.copy2(src_env, dest_env)
 
     print("[Update] Update applied successfully")
+

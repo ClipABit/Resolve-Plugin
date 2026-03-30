@@ -134,19 +134,55 @@ class NetworkClient(QObject):
         _do()
 
     def get_github_release_version(self, owner: str, repo: str,
+                                   stable_only: bool = True,
                                    on_success: Callable = None,
                                    on_error: Callable = None):
-        """Fetch latest release version from GitHub API (no auth required)."""
-        url = f"https://api.github.com/repos/{owner}/{repo}/releases/latest"
-        print(f"[Network] Fetching latest release from {owner}/{repo}")
+        """Fetch latest release version from GitHub API (no auth required).
+
+        If stable_only=True, uses /releases/latest (only stable releases).
+        If stable_only=False, uses /releases (returns list, we take the first one).
+        """
+        if stable_only:
+            url = f"https://api.github.com/repos/{owner}/{repo}/releases/latest"
+            print(f"[Network] Fetching latest STABLE release from {owner}/{repo}")
+        else:
+            url = f"https://api.github.com/repos/{owner}/{repo}/releases"
+            print(f"[Network] Fetching latest release (including pre-releases) from {owner}/{repo}")
+
+        def _on_raw_success(status, reply_data):
+            if not on_success:
+                return
+            
+            if stable_only:
+                # Single dict returned
+                on_success(status, reply_data)
+            else:
+                # List of dicts returned. Find the one with the highest version.
+                if isinstance(reply_data, list) and len(reply_data) > 0:
+                    try:
+                        from .version_manager import parse_semver
+                        # Sort by semver descending
+                        sorted_releases = sorted(
+                            reply_data,
+                            key=lambda x: parse_semver(x.get("tag_name", "v0.0.0")),
+                            reverse=True
+                        )
+                        best = sorted_releases[0]
+                        print(f"[Network] Found {len(reply_data)} releases. Best candidate: {best.get('tag_name')}")
+                        on_success(status, best)
+                    except Exception as e:
+                        print(f"[Network] Error sorting releases: {e}")
+                        on_success(status, reply_data[0])
+                else:
+                    on_success(404, {"message": "No releases found"})
 
         req = QNetworkRequest(QUrl(url))
         if hasattr(req, "setTransferTimeout"):
             req.setTransferTimeout(30_000)
         reply = self._nam.get(req)
         self._wire_reply(
-            reply, on_success, on_error,
-            method="GET", url="releases/latest",
+            reply, _on_raw_success, on_error,
+            method="GET", url="releases",
         )
 
     def download_file(self, url: str, dest_path: str, timeout: int = 120,

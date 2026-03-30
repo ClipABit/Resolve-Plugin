@@ -33,7 +33,7 @@ from ..core.network import NetworkClient
 from ..core.uploader import FileUploader
 from ..core.version_manager import (
     load_installed_version, save_installed_version,
-    is_newer, get_plugin_install_dir, apply_update,
+    is_newer, is_prerelease, get_plugin_install_dir, apply_update,
 )
 from ..api.auth_manager import AuthManager
 from .theme import Theme
@@ -302,8 +302,19 @@ class ClipABitApp(QWidget):
         
         # Check for updates when search screen is about to show
         if is_logged_in:
+            local_tag = load_installed_version(Config.RELEASE_TAG)
+            
+            # Use staging track if local version is a pre-release 
+            # OR if the environment is explicitly set to 'staging' or 'dev'.
+            is_staging_env = Config.ENVIRONMENT in ("staging", "dev")
+            use_stable_only = not (is_prerelease(local_tag) or is_staging_env)
+            
+            if is_staging_env:
+                print(f"[Version] Forcing staging track (Env: {Config.ENVIRONMENT})")
+            
             self._network.get_github_release_version(
                 Config.OWNER, Config.REPO,
+                stable_only=use_stable_only,
                 on_success=self._on_version_check_success,
                 on_error=self._on_version_check_error,
             )
