@@ -1,3 +1,9 @@
+## [1.4.0-staging.2](https://github.com/ClipABit/Resolve-Plugin/compare/v1.4.0-staging.1...v1.4.0-staging.2) (2026-03-30)
+
+### Features
+
+* enforces conventional commit for PR title ([#52](https://github.com/ClipABit/Resolve-Plugin/issues/52)) ([de87959](https://github.com/ClipABit/Resolve-Plugin/commit/de879595e7a39a45e2cc511979fe7effc9c4442f))
+
 ## [1.4.0-staging.1](https://github.com/ClipABit/Resolve-Plugin/compare/v1.3.0...v1.4.0-staging.1) (2026-03-29)
 
 ### Features
