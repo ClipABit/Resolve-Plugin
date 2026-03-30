@@ -1,3 +1,10 @@
+## [1.4.0-staging.3](https://github.com/ClipABit/Resolve-Plugin/compare/v1.4.0-staging.2...v1.4.0-staging.3) (2026-03-30)
+
+### Bug Fixes
+
+* Fixed Updater Bugs ([#54](https://github.com/ClipABit/Resolve-Plugin/issues/54)) ([bd950f2](https://github.com/ClipABit/Resolve-Plugin/commit/bd950f21bd2f8a4a5de22ec1dc2f6dbbbfbfa505))
+* scopes processed/upload files to project ([#55](https://github.com/ClipABit/Resolve-Plugin/issues/55)) ([b4139e6](https://github.com/ClipABit/Resolve-Plugin/commit/b4139e63fd8e9b2dfab1e761130d7d492202822d))
+
 ## [1.4.0-staging.2](https://github.com/ClipABit/Resolve-Plugin/compare/v1.4.0-staging.1...v1.4.0-staging.2) (2026-03-30)
 
 ### Features
