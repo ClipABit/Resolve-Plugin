@@ -8,7 +8,15 @@ class Config:
 
     # Modal ASGI app base URLs
     # URL format: https://clipabit01--{app-name}-{classname-lowercase}-asgi-app.modal.run
-    if ENVIRONMENT == "dev":
+    # Base URLs
+    # set CLIPABIT_DEV_REMOTE=true to use modal dev URLs
+    DEV_NAME = os.environ.get("CLIPABIT_DEV_NAME", "dev")
+    DEV_REMOTE = os.environ.get("CLIPABIT_DEV_REMOTE", "")
+
+    if ENVIRONMENT == "dev" and not DEV_REMOTE:
+        SERVER_BASE_URL = "http://127.0.0.1:8000"
+        SEARCH_BASE_URL = "http://127.0.0.1:8000"
+    elif ENVIRONMENT == "dev":
         # Dev combined mode: both services in dev-server app
         # App name is {DEV_NAME}-dev-server (matches monorepo dev_combined.py)
         DEV_NAME = os.environ.get("CLIPABIT_DEV_NAME", "dev")
