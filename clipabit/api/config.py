@@ -10,8 +10,7 @@ class Config:
     # URL format: https://clipabit01--{app-name}-{classname-lowercase}-asgi-app.modal.run
     # Base URLs
     # set CLIPABIT_DEV_REMOTE=true to use modal dev URLs
-    DEV_NAME = os.environ.get("CLIPABIT_DEV_NAME", "dev")
-    DEV_REMOTE = os.environ.get("CLIPABIT_DEV_REMOTE", "")
+    DEV_REMOTE = os.environ.get("CLIPABIT_DEV_REMOTE", "").lower() in {"1", "true"}
 
     if ENVIRONMENT == "dev" and not DEV_REMOTE:
         SERVER_BASE_URL = "http://127.0.0.1:8000"
