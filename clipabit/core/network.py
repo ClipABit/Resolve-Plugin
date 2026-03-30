@@ -154,24 +154,33 @@ class NetworkClient(QObject):
                 return
             
             if stable_only:
-                # Single dict returned
+                # Single dict returned (GitHub's /latest is strictly stable)
                 on_success(status, reply_data)
             else:
-                # List of dicts returned. Find the one with the highest version.
+                # List of dicts returned. Filter for pre-releases ONLY for the staging track.
                 if isinstance(reply_data, list) and len(reply_data) > 0:
                     try:
                         from .version_manager import parse_semver
+                        # Find only items marked as pre-release on GitHub
+                        staging_releases = [r for r in reply_data if r.get("prerelease") is True]
+                        
+                        if not staging_releases:
+                            print("[Network] No pre-releases found in GitHub response")
+                            on_success(404, {"message": "No staging releases found"})
+                            return
+
                         # Sort by semver descending
                         sorted_releases = sorted(
-                            reply_data,
+                            staging_releases,
                             key=lambda x: parse_semver(x.get("tag_name", "v0.0.0")),
                             reverse=True
                         )
                         best = sorted_releases[0]
-                        print(f"[Network] Found {len(reply_data)} releases. Best candidate: {best.get('tag_name')}")
+                        print(f"[Network] Staging Track: Found {len(staging_releases)} pre-releases. Latest: {best.get('tag_name')}")
                         on_success(status, best)
                     except Exception as e:
-                        print(f"[Network] Error sorting releases: {e}")
+                        print(f"[Network] Error filtering staging releases: {e}")
+                        # Fallback to first item if filtering fails
                         on_success(status, reply_data[0])
                 else:
                     on_success(404, {"message": "No releases found"})
