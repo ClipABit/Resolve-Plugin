@@ -95,7 +95,15 @@ class NetworkClient(QObject):
                 reply.deleteLater()
 
             else:
-                body = reply.readAll().data().decode("utf-8", errors="replace")
+                raw = reply.readAll().data()
+                body = raw.decode("utf-8", errors="replace")
+                # Extract user-facing message from JSON error responses
+                try:
+                    detail = json.loads(raw).get("detail")
+                    if detail:
+                        body = detail
+                except (json.JSONDecodeError, ValueError, AttributeError):
+                    pass
                 if status:
                     msg = f"HTTP {status}: {body}"
                 else:
