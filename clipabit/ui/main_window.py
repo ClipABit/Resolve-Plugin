@@ -1065,7 +1065,17 @@ class ClipABitApp(QWidget):
     def _get_file_status_text(self):
         """Get the file status text for display."""
         total = len(self.clip_map)
-        processed = len(self.processed_files)
+        processed = 0
+        for clip_info in self.clip_map.values():
+            if isinstance(clip_info, list):
+                for clip in clip_info:
+                    filepath = clip.get('filepath')
+                    if filepath and get_file_hash(filepath) in self.processed_files:
+                        processed += 1
+            else:
+                filepath = clip_info.get('filepath')
+                if filepath and get_file_hash(filepath) in self.processed_files:
+                    processed += 1
         new_files = total - processed
         return f"Total: {total} files | Processed: {processed} | New: {new_files}"
     
