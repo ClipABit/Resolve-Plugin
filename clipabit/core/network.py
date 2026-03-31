@@ -283,9 +283,11 @@ class NetworkClient(QObject):
                     QNetworkRequest.KnownHeaders.ContentDispositionHeader,
                     f'form-data; name="{file_field}"; filename="{fn}"',
                 )
+                import mimetypes
+                content_type = mimetypes.guess_type(file_path)[0] or "application/octet-stream"
                 fp.setHeader(
                     QNetworkRequest.KnownHeaders.ContentTypeHeader,
-                    "video/mp4",
+                    content_type,
                 )
                 qf = QFile(file_path)
                 if not qf.open(QIODevice.OpenModeFlag.ReadOnly):

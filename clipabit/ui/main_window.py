@@ -2179,12 +2179,16 @@ class ClipABitApp(QWidget):
             except Exception:
                 pass
 
-            # Apply same filter as the append action
+            # Skip clips that are definitely not video (audio-only, stills).
+            # Allow clips with unknown/None type through — some containers
+            # (e.g. .MOV/QuickTime) may report unexpected type strings.
             try:
                 clip_type = clip.GetClipProperty("Type")
             except Exception:
                 clip_type = None
-            if not clip_type or "Video" not in clip_type:
+            if clip_type and clip_type.strip() in ("Audio", "Still"):
+                if debug:
+                    print(f"[MediaPool] Skipping non-video clip: type={clip_type!r}")
                 continue
 
             try:
