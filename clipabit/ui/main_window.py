@@ -399,6 +399,8 @@ class ClipABitApp(QWidget):
         # Hide internal features when not logged in
         self.btn_media_pool.setVisible(is_logged_in)
         self.btn_jobs_debug.setVisible(is_logged_in)
+        if hasattr(self, 'btn_migrate'):
+            self.btn_migrate.setVisible(is_logged_in)
         self.btn_auth.setVisible(is_logged_in)
         self.logo_widget.setVisible(is_logged_in)
 
@@ -446,7 +448,14 @@ class ClipABitApp(QWidget):
         self.btn_jobs_debug.setToolTip("Info")
         self.btn_jobs_debug.clicked.connect(self._show_jobs_dialog)
         layout.addWidget(self.btn_jobs_debug)
-        
+
+        if Config.ENVIRONMENT in ("staging", "dev"):
+            self.btn_migrate = QPushButton("Migrate")
+            self.btn_migrate.setObjectName("headerButtonSecondary")
+            self.btn_migrate.setToolTip("Migrate processed files to current project")
+            self.btn_migrate.clicked.connect(self._migrate_processed_files)
+            layout.addWidget(self.btn_migrate)
+
         header.setLayout(layout)
         return header
     
@@ -755,6 +764,12 @@ class ClipABitApp(QWidget):
     def _save_processed_files(self):
         save_processed_files(self.processed_files)
 
+    def _get_project_processed_files(self) -> dict:
+        """Return the processed-files bucket for the current Resolve project."""
+        project_id = self.get_project_id()
+        if not project_id:
+            return {}
+        return self.processed_files.get(project_id, {})
 
     def _apply_theme(self):
         """Apply the current theme stylesheet matching Figma mockups."""
@@ -1080,7 +1095,7 @@ class ClipABitApp(QWidget):
         layout.addWidget(storage_label)
         
         # Processed files count
-        processed_label = QLabel(f"Processed: {len(self.processed_files)} files")
+        processed_label = QLabel(f"Processed: {len(self._get_project_processed_files())} files")
         processed_label.setStyleSheet("color: #8E8E93; font-size: 11px;")
         layout.addWidget(processed_label)
         
@@ -1145,15 +1160,16 @@ class ClipABitApp(QWidget):
         """Get the file status text for display."""
         total = len(self.clip_map)
         processed = 0
+        project_files = self._get_project_processed_files()
         for clip_info in self.clip_map.values():
             if isinstance(clip_info, list):
                 for clip in clip_info:
                     filepath = clip.get('filepath')
-                    if filepath and get_file_hash(filepath) in self.processed_files:
+                    if filepath and get_file_hash(filepath) in project_files:
                         processed += 1
             else:
                 filepath = clip_info.get('filepath')
-                if filepath and get_file_hash(filepath) in self.processed_files:
+                if filepath and get_file_hash(filepath) in project_files:
                     processed += 1
         new_files = total - processed
         return f"Total: {total} files | Processed: {processed} | New: {new_files}"
@@ -1185,13 +1201,14 @@ class ClipABitApp(QWidget):
         new_files = []
         
         for filename, clip_info in self.clip_map.items():
+            project_files = self._get_project_processed_files()
             if isinstance(clip_info, list):
                 # Handle multiple clips with same filename
                 for clip in clip_info:
                     filepath = clip.get('filepath')
                     if filepath:
                         file_hash = get_file_hash(filepath)
-                        if file_hash in self.processed_files:
+                        if file_hash in project_files:
                             processed_count += 1
                         else:
                             new_files.append(filename)
@@ -1199,7 +1216,7 @@ class ClipABitApp(QWidget):
                 filepath = clip_info.get('filepath')
                 if filepath:
                     file_hash = get_file_hash(filepath)
-                    if file_hash in self.processed_files:
+                    if file_hash in project_files:
                         processed_count += 1
                     else:
                         new_files.append(filename)
@@ -1262,7 +1279,7 @@ class ClipABitApp(QWidget):
             filename = os.path.basename(filepath)
             file_hash = get_file_hash(filepath)
 
-            if file_hash in self.processed_files:
+            if file_hash in self._get_project_processed_files():
                 skipped_processed += 1
                 return
 
@@ -1528,14 +1545,16 @@ class ClipABitApp(QWidget):
                 except (TypeError, ValueError):
                     pass
 
-                self.processed_files[file_hash] = {
-                    'filename': filename,
-                    'filepath': filepath,
-                    'namespace': namespace,
-                    'hashed_identifier': hashed_identifier,
-                    'vector_count': vector_count,
-                    'processed_at': time.time(),
-                }
+                project_id = self.get_project_id()
+                if project_id:
+                    self.processed_files.setdefault(project_id, {})[file_hash] = {
+                        'filename': filename,
+                        'filepath': filepath,
+                        'namespace': namespace,
+                        'hashed_identifier': hashed_identifier,
+                        'vector_count': vector_count,
+                        'processed_at': time.time(),
+                    }
                 self._save_processed_files()
                 
                 # Remove from current jobs
@@ -2362,33 +2381,81 @@ class ClipABitApp(QWidget):
             return hashlib.sha256(name.encode()).hexdigest()[:36]
         return None
 
+    def _migrate_processed_files(self):
+        """Migrate flat processed-file entries into the current project's bucket."""
+        project_id = self.get_project_id()
+        if not project_id:
+            QMessageBox.warning(self, "Migration", "No Resolve project detected.")
+            return
+
+        # Identify flat entries (top-level values that have a "filename" key)
+        flat_hashes = {
+            h: info for h, info in self.processed_files.items()
+            if isinstance(info, dict) and "filename" in info
+        }
+
+        if not flat_hashes:
+            QMessageBox.information(self, "Migration", "No flat entries to migrate.")
+            return
+
+        # Build a lookup of file hashes present in the current clip map
+        clip_hashes = set()
+        for clip_info in self.clip_map.values():
+            entries = clip_info if isinstance(clip_info, list) else [clip_info]
+            for entry in entries:
+                fp = entry.get("filepath")
+                if fp:
+                    clip_hashes.add(get_file_hash(fp))
+
+        migrated = 0
+        unmatched = 0
+        bucket = self.processed_files.setdefault(project_id, {})
+
+        for file_hash, info in flat_hashes.items():
+            if file_hash in clip_hashes:
+                bucket[file_hash] = info
+                migrated += 1
+            else:
+                unmatched += 1
+
+        self._save_processed_files()
+        self._update_file_status()
+        QMessageBox.information(
+            self,
+            "Migration Complete",
+            f"Migrated: {migrated}\nUnmatched: {unmatched}\n\n"
+            "Flat entries were NOT deleted — remove them manually if desired.",
+        )
+        print(f"[Migration] project={project_id}: migrated={migrated}, unmatched={unmatched}")
+
     def _show_processed_files(self):
         """Show processed files in a dialog window."""
-        if not self.processed_files:
+        project_files = self._get_project_processed_files()
+        if not project_files:
             QMessageBox.information(self, "Processed Files", "No files have been processed yet.")
             return
-        
+
         try:
             # Create dialog window (modal to prevent it from closing)
             dialog = QDialog(self)
             dialog.setWindowTitle("Processed Files")
             dialog.resize(600, 400)
             dialog.setModal(True)  # Make it modal so it stays open
-            
+
             layout = QVBoxLayout()
-            
+
             # Header
-            header = QLabel(f"<b>Processed Files ({len(self.processed_files)} total)</b>")
+            header = QLabel(f"<b>Processed Files ({len(project_files)} total)</b>")
             layout.addWidget(header)
-            
+
             # Scrollable list
             scroll = QScrollArea()
             scroll.setWidgetResizable(True)
             scroll_widget = QWidget()
             scroll_layout = QVBoxLayout()
-            
+
             # Display each processed file
-            for _, file_info in sorted(self.processed_files.items(),
+            for _, file_info in sorted(project_files.items(),
                                           key=lambda x: x[1].get('processed_at', 0),
                                           reverse=True):
                 file_frame = QFrame()
@@ -2448,21 +2515,23 @@ class ClipABitApp(QWidget):
             QMessageBox.critical(self, "Error", f"Failed to show processed files:\n{str(e)}")
     
     def _clear_processed_files(self):
-        """Clear local processed files tracking."""
-        if not self.processed_files:
+        """Clear local processed files tracking for the current project."""
+        project_id = self.get_project_id()
+        project_files = self._get_project_processed_files()
+        if not project_files:
             QMessageBox.information(self, "Clear Processed Files", "No processed files to clear.")
             return
 
         reply = QMessageBox.question(
             self,
             "Clear Processed Files",
-            f"Clear tracking for {len(self.processed_files)} processed files?\n\n"
+            f"Clear tracking for {len(project_files)} processed files?\n\n"
             "This only clears local tracking — backend data is retained.",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
         )
 
         if reply == QMessageBox.StandardButton.Yes:
-            self.processed_files.clear()
+            self.processed_files.pop(project_id, None)
             self._save_processed_files()
             self._update_file_status()
             QMessageBox.information(self, "Cleared", "Processed files tracking has been cleared.")
@@ -2470,19 +2539,21 @@ class ClipABitApp(QWidget):
             
     def _run_consistency_check(self, reason: str):
         """Sync local tracking with backend and remove dangling entries."""
-        if not self.processed_files:
+        project_id = self.get_project_id()
+        project_files = self._get_project_processed_files()
+        if not project_files:
             return {"checked": 0, "removed": 0}
 
         removed_count = 0
         checked_count = 0
 
-        for file_hash, info in list(self.processed_files.items()):
+        for file_hash, info in list(project_files.items()):
             filepath = info.get("filepath", "")
             checked_count += 1
 
             if filepath and not os.path.exists(filepath):
                 print(f"[Consistency] Missing local file: {info.get('filename', '')}. Removing local record.")
-                del self.processed_files[file_hash]
+                del self.processed_files[project_id][file_hash]
                 removed_count += 1
 
         if removed_count > 0:
