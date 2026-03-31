@@ -1,3 +1,9 @@
+## [1.4.0-staging.5](https://github.com/ClipABit/Resolve-Plugin/compare/v1.4.0-staging.4...v1.4.0-staging.5) (2026-03-31)
+
+### Bug Fixes
+
+* add config defaults to localhost instead of Modal dev URLs ([#56](https://github.com/ClipABit/Resolve-Plugin/issues/56)) ([6f78fbf](https://github.com/ClipABit/Resolve-Plugin/commit/6f78fbfe1f2d8482b9e4e171daa44eb400c51b76))
+
 ## [1.4.0-staging.4](https://github.com/ClipABit/Resolve-Plugin/compare/v1.4.0-staging.3...v1.4.0-staging.4) (2026-03-31)
 
 ### Bug Fixes
