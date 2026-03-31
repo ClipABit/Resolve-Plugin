@@ -1,3 +1,9 @@
+## [1.4.0-staging.7](https://github.com/ClipABit/Resolve-Plugin/compare/v1.4.0-staging.6...v1.4.0-staging.7) (2026-03-31)
+
+### Bug Fixes
+
+* uses video mime type instead of hardcoded mp4 ([#59](https://github.com/ClipABit/Resolve-Plugin/issues/59)) ([4fcb7e2](https://github.com/ClipABit/Resolve-Plugin/commit/4fcb7e2a7329f87f9ab61edb753739d6c490bc7c))
+
 ## [1.4.0-staging.6](https://github.com/ClipABit/Resolve-Plugin/compare/v1.4.0-staging.5...v1.4.0-staging.6) (2026-03-31)
 
 ### Bug Fixes
