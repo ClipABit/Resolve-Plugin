@@ -17,6 +17,7 @@ try:
                                  QDialog, QCheckBox, QGridLayout, QProgressBar)
     from PyQt6.QtCore import Qt, QTimer
     from PyQt6.QtSvgWidgets import QSvgWidget
+    from PyQt6.QtNetwork import QLocalServer, QLocalSocket
 except ImportError as e:
     print(f"Error: PyQt6 not found or missing component: {e}")
     # We can't exit here if imported by shim, but we log the issue
@@ -44,6 +45,73 @@ resolve = None
 project = None
 media_pool = None
 project_manager = None
+
+# Single process window instance
+_instance = None
+
+# Single application process server stuff
+_SINGLE_INSTANCE_KEY = "ClipABitResolvePluginSingleton"
+_single_instance_server = None
+
+
+def _send_single_instance_message():
+    """Notify running instance to activate and then exit."""
+    try:
+        socket = QLocalSocket()
+        socket.connectToServer(_SINGLE_INSTANCE_KEY)
+        if not socket.waitForConnected(300):
+            return False
+        socket.write(b"activate")
+        socket.flush()
+        socket.waitForBytesWritten(300)
+        socket.disconnectFromServer()
+        return True
+    except Exception as e:
+        print(f"[Plugin] Single instance signaling failure: {e}")
+        return False
+
+
+def _setup_single_instance_server():
+    """Start local server to accept activation requests from new processes."""
+    global _single_instance_server
+
+    try:
+        # Remove stale socket from prior crashes.
+        QLocalServer.removeServer(_SINGLE_INSTANCE_KEY)
+    except Exception:
+        pass
+
+    _single_instance_server = QLocalServer()
+
+    def _on_new_connection():
+        global _instance
+        sock = _single_instance_server.nextPendingConnection()
+        if sock:
+            try:
+                if sock.waitForReadyRead(300):
+                    _ = sock.readAll()
+            except Exception:
+                pass
+            finally:
+                sock.disconnectFromServer()
+
+        if _instance is not None:
+            if _instance.isMinimized():
+                _instance.showNormal()
+            _instance.show()
+            _instance.raise_()
+            _instance.activateWindow()
+
+    _single_instance_server.newConnection.connect(_on_new_connection)
+
+    if not _single_instance_server.listen(_SINGLE_INSTANCE_KEY):
+        try:
+            QLocalServer.removeServer(_SINGLE_INSTANCE_KEY)
+        except Exception:
+            pass
+        _single_instance_server = QLocalServer()
+        _single_instance_server.newConnection.connect(_on_new_connection)
+        _single_instance_server.listen(_SINGLE_INSTANCE_KEY)
 
 # Try to load standalone API (local dev usage) or check for global 'app'
 try:
@@ -2430,10 +2498,12 @@ class ClipABitApp(QWidget):
 
     def closeEvent(self, event):
         """Handle window close event."""
+        global _instance
         if hasattr(self, 'job_tracker'):
             self.job_tracker.stop()
         if hasattr(self, 'refresh_timer'):
             self.refresh_timer.stop()
+        _instance = None
         event.accept()
 
 def main(resolve_api=None):
@@ -2442,8 +2512,8 @@ def main(resolve_api=None):
     Args:
         resolve_api: Optional Resolve object injected from the shim.
     """
-    global resolve, project, media_pool, project_manager
-    
+    global resolve, project, media_pool, project_manager, _instance
+
     # If API object is injected, use it to setup globals
     if resolve_api:
         resolve = resolve_api
@@ -2455,7 +2525,7 @@ def main(resolve_api=None):
         except Exception as e:
             print(f"[Plugin] Failed to initialize Resolve objects from injected API: {e}")
             resolve = None
-    
+
     # Check if we have a valid Resolve connection
     if not resolve:
         print("[Plugin] Warning: Running without Resolve API (Simulation Mode)")
@@ -2463,11 +2533,19 @@ def main(resolve_api=None):
     app_qt = QApplication.instance()
     if not app_qt:
         app_qt = QApplication(sys.argv)
-    
-    window = ClipABitApp()
-    window.show()
-    window.raise_()
-    window.activateWindow()
-    
-    print("ClipABit Plugin started.") 
+
+    # Another process already has server and window
+    if _send_single_instance_message():
+        print("ClipABit Plugin already running in another process: requesting existing instance to activate.")
+        return
+
+    # This process becomes the primary instance
+    _setup_single_instance_server()
+
+    _instance = ClipABitApp()
+    _instance.show()
+    _instance.raise_()
+    _instance.activateWindow()
+
+    print("ClipABit Plugin started.")
     app_qt.exec()
