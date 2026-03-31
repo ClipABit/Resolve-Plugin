@@ -1,3 +1,9 @@
+## [1.4.0-staging.4](https://github.com/ClipABit/Resolve-Plugin/compare/v1.4.0-staging.3...v1.4.0-staging.4) (2026-03-31)
+
+### Bug Fixes
+
+* multiple windows ([#57](https://github.com/ClipABit/Resolve-Plugin/issues/57)) ([8567fa7](https://github.com/ClipABit/Resolve-Plugin/commit/8567fa768ef28fbff3159f3fd271af37f599064c))
+
 ## [1.4.0-staging.3](https://github.com/ClipABit/Resolve-Plugin/compare/v1.4.0-staging.2...v1.4.0-staging.3) (2026-03-30)
 
 ### Bug Fixes
