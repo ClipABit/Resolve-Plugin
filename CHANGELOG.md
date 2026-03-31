@@ -1,3 +1,9 @@
+## [1.4.0-staging.6](https://github.com/ClipABit/Resolve-Plugin/compare/v1.4.0-staging.5...v1.4.0-staging.6) (2026-03-31)
+
+### Bug Fixes
+
+* resolves process upload filename missing ([#58](https://github.com/ClipABit/Resolve-Plugin/issues/58)) ([81cff91](https://github.com/ClipABit/Resolve-Plugin/commit/81cff911083445e82c7a52629cb3314a2029b305))
+
 ## [1.4.0-staging.5](https://github.com/ClipABit/Resolve-Plugin/compare/v1.4.0-staging.4...v1.4.0-staging.5) (2026-03-31)
 
 ### Bug Fixes
