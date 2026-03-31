@@ -170,6 +170,7 @@ This watches the plugin source and syncs both:
 | `CLIPABIT_SERVER_URL` | No | auto (from environment) | Override base URL for upload/status endpoints |
 | `CLIPABIT_SEARCH_URL` | No | auto (from environment) | Override base URL for search endpoint |
 | `CLIPABIT_DEV_NAME` | No | `dev` | Dev server name prefix (dev environment only) |
+| `CLIPABIT_DEV_REMOTE` | No | _(unset)_ | In `dev`, set this to any non-empty value (e.g. `1`, `true`) to use Modal dev URLs instead of localhost. Note: the current implementation treats **any** non-empty string (including `false`) as enabled. |
 
 ### File Locations
 
