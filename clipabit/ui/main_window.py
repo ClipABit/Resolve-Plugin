@@ -1462,18 +1462,17 @@ class ClipABitApp(QWidget):
             if temp_job_id in self.current_jobs:
                 del self.current_jobs[temp_job_id]
                 
-            # Create real job entry
-            filepath = self.current_upload['filepath'] if self.current_upload else ""
-            namespace = self.current_uploader.namespace if hasattr(self, 'current_uploader') else ""
-            
+            # Create real job entry — read from the FileUploader instance
+            # (not shared state) so the data is always correct for this upload.
+            uploader = self.current_uploader
             job_info = {
                 'filename': filename,
-                'filepath': filepath,
+                'filepath': uploader.filepath if uploader else "",
                 'file_hash': file_hash,
                 'status': 'processing',
-                'namespace': namespace,
-                'hashed_identifier': self.current_upload.get('hashed_identifier', '') if self.current_upload else '',
-                'project_id': self.current_upload.get('project_id', '') if self.current_upload else '',
+                'namespace': uploader.namespace if uploader else "",
+                'hashed_identifier': uploader.hashed_identifier if uploader else "",
+                'project_id': uploader.project_id if uploader else "",
             }
 
             self.current_jobs[job_id] = job_info
@@ -1546,15 +1545,11 @@ class ClipABitApp(QWidget):
                 
                 self.status_label.setText(f"Completed: {filename}")
                 print(f"[Job] Job {job_id} completed for {filename}")
-                
-                # Continue with next upload in queue
-                self._on_upload_completed(True)
                 # Skip immediate consistency check; backend counts can lag right after upload
         except Exception as e:
             err_msg = f"Critical error in job completion: {e}\n{traceback.format_exc()}"
             print(err_msg)
             QMessageBox.critical(self, "Plugin Error", f"An error occurred while finishing the job:\n{e}")
-            self._on_upload_completed(False)
             
     def _on_job_failed(self, job_id: str, error: str):
         """Handle job failure."""
@@ -1569,8 +1564,6 @@ class ClipABitApp(QWidget):
 
             self.status_label.setText(f"Failed: {filename}")
             QMessageBox.warning(self, "Upload Failed", f"Processing failed for {filename}:\n{error}")
-
-            self._on_upload_completed(False)
             
     def _on_upload_completed(self, success: bool):
         """Handle completion of a single upload."""
