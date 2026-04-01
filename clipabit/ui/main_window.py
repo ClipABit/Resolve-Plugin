@@ -1199,9 +1199,9 @@ class ClipABitApp(QWidget):
         total_files = len(self.clip_map)
         processed_count = 0
         new_files = []
+        project_files = self._get_project_processed_files()
         
         for filename, clip_info in self.clip_map.items():
-            project_files = self._get_project_processed_files()
             if isinstance(clip_info, list):
                 # Handle multiple clips with same filename
                 for clip in clip_info:
