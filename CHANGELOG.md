@@ -1,3 +1,15 @@
+## [1.4.0-staging.9](https://github.com/ClipABit/Resolve-Plugin/compare/v1.4.0-staging.8...v1.4.0-staging.9) (2026-04-01)
+
+### Features
+
+* removes migrate button in staging ([#62](https://github.com/ClipABit/Resolve-Plugin/issues/62)) ([b3ee2ee](https://github.com/ClipABit/Resolve-Plugin/commit/b3ee2ee81d3f9db7ead1c7ead7dc94b933bd8603))
+
+## [1.4.0-staging.8](https://github.com/ClipABit/Resolve-Plugin/compare/v1.4.0-staging.7...v1.4.0-staging.8) (2026-03-31)
+
+### Bug Fixes
+
+* subfolder upload and search ([#53](https://github.com/ClipABit/Resolve-Plugin/issues/53)) ([d0ddc29](https://github.com/ClipABit/Resolve-Plugin/commit/d0ddc295ea36c07cfb87b85c18a810ff9c0e9e21)), closes [#49](https://github.com/ClipABit/Resolve-Plugin/issues/49)
+
 ## [1.4.0-staging.7](https://github.com/ClipABit/Resolve-Plugin/compare/v1.4.0-staging.6...v1.4.0-staging.7) (2026-03-31)
 
 ### Bug Fixes
