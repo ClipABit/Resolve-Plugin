@@ -399,8 +399,6 @@ class ClipABitApp(QWidget):
         # Hide internal features when not logged in
         self.btn_media_pool.setVisible(is_logged_in)
         self.btn_jobs_debug.setVisible(is_logged_in)
-        if hasattr(self, 'btn_migrate'):
-            self.btn_migrate.setVisible(is_logged_in)
         self.btn_auth.setVisible(is_logged_in)
         self.logo_widget.setVisible(is_logged_in)
 
@@ -448,13 +446,6 @@ class ClipABitApp(QWidget):
         self.btn_jobs_debug.setToolTip("Info")
         self.btn_jobs_debug.clicked.connect(self._show_jobs_dialog)
         layout.addWidget(self.btn_jobs_debug)
-
-        if Config.ENVIRONMENT in ("staging", "dev"):
-            self.btn_migrate = QPushButton("Migrate")
-            self.btn_migrate.setObjectName("headerButtonSecondary")
-            self.btn_migrate.setToolTip("Migrate processed files to current project")
-            self.btn_migrate.clicked.connect(self._migrate_processed_files)
-            layout.addWidget(self.btn_migrate)
 
         header.setLayout(layout)
         return header
@@ -2380,53 +2371,6 @@ class ClipABitApp(QWidget):
         if name:
             return hashlib.sha256(name.encode()).hexdigest()[:36]
         return None
-
-    def _migrate_processed_files(self):
-        """Migrate flat processed-file entries into the current project's bucket."""
-        project_id = self.get_project_id()
-        if not project_id:
-            QMessageBox.warning(self, "Migration", "No Resolve project detected.")
-            return
-
-        # Identify flat entries (top-level values that have a "filename" key)
-        flat_hashes = {
-            h: info for h, info in self.processed_files.items()
-            if isinstance(info, dict) and "filename" in info
-        }
-
-        if not flat_hashes:
-            QMessageBox.information(self, "Migration", "No flat entries to migrate.")
-            return
-
-        # Build a lookup of file hashes present in the current clip map
-        clip_hashes = set()
-        for clip_info in self.clip_map.values():
-            entries = clip_info if isinstance(clip_info, list) else [clip_info]
-            for entry in entries:
-                fp = entry.get("filepath")
-                if fp:
-                    clip_hashes.add(get_file_hash(fp))
-
-        migrated = 0
-        unmatched = 0
-        bucket = self.processed_files.setdefault(project_id, {})
-
-        for file_hash, info in flat_hashes.items():
-            if file_hash in clip_hashes:
-                bucket[file_hash] = info
-                migrated += 1
-            else:
-                unmatched += 1
-
-        self._save_processed_files()
-        self._update_file_status()
-        QMessageBox.information(
-            self,
-            "Migration Complete",
-            f"Migrated: {migrated}\nUnmatched: {unmatched}\n\n"
-            "Flat entries were NOT deleted — remove them manually if desired.",
-        )
-        print(f"[Migration] project={project_id}: migrated={migrated}, unmatched={unmatched}")
 
     def _show_processed_files(self):
         """Show processed files in a dialog window."""
