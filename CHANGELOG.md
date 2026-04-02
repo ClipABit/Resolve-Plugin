@@ -1,3 +1,9 @@
+## [1.4.0-staging.10](https://github.com/ClipABit/Resolve-Plugin/compare/v1.4.0-staging.9...v1.4.0-staging.10) (2026-04-02)
+
+### Bug Fixes
+
+* visual bugs ([#65](https://github.com/ClipABit/Resolve-Plugin/issues/65)) ([6b5aadf](https://github.com/ClipABit/Resolve-Plugin/commit/6b5aadf0fde5ba6b9c680de70a053b5774df051d))
+
 ## [1.4.0-staging.9](https://github.com/ClipABit/Resolve-Plugin/compare/v1.4.0-staging.8...v1.4.0-staging.9) (2026-04-01)
 
 ### Features
