@@ -1755,25 +1755,168 @@ class ClipABitApp(QWidget):
             elif item.layout():
                 self._clear_layout(item.layout())
         
-    def _resolve_local_path(self, filename: str) -> Optional[str]:
-        """Look up a filename in the media pool clip_map and return its local file path."""
+    def _normalize_media_path(self, path_value: Optional[str]) -> Optional[str]:
+        """Normalize a media file path for reliable comparisons."""
+        if not path_value:
+            return None
+        try:
+            return os.path.normcase(os.path.normpath(path_value))
+        except Exception:
+            return path_value
+
+    def _iter_clip_entries(self):
+        """Yield normalized clip-map entries one by one."""
+        for clip_info in self.clip_map.values():
+            if isinstance(clip_info, list):
+                for entry in clip_info:
+                    yield entry
+            else:
+                yield clip_info
+
+    def _get_result_hashed_identifier(self, result: Dict) -> Optional[str]:
+        """Return a stable backend identifier from a search result when available."""
+        metadata = result.get('metadata', {})
+        for container in (metadata, result):
+            if not isinstance(container, dict):
+                continue
+            for key in ("hashed_identifier", "hashedIdentifier"):
+                value = container.get(key)
+                if value:
+                    return value
+        return None
+
+    def _find_processed_info(
+        self,
+        filename: str = "",
+        file_path: Optional[str] = None,
+        hashed_identifier: Optional[str] = None,
+    ) -> Optional[Dict]:
+        """Find the best matching processed-file record for a search result."""
+        project_files = self._get_project_processed_files()
+        normalized_file_path = self._normalize_media_path(file_path)
+
+        if hashed_identifier:
+            for info in project_files.values():
+                if info.get('hashed_identifier') == hashed_identifier:
+                    return info
+
+        if normalized_file_path:
+            for info in project_files.values():
+                if self._normalize_media_path(info.get('filepath')) == normalized_file_path:
+                    return info
+
+        if filename:
+            exact_matches = []
+            for info in project_files.values():
+                info_filename = info.get('filename') or os.path.basename(info.get('filepath', ''))
+                if info_filename == filename and info.get('filepath') and os.path.exists(info.get('filepath')):
+                    exact_matches.append(info)
+            if len(exact_matches) == 1:
+                return exact_matches[0]
+
+        return None
+
+    def _resolve_local_path(self, filename: str, hashed_identifier: Optional[str] = None) -> Optional[str]:
+        """Look up a filename in processed files / media pool and return its local path."""
+        processed_info = self._find_processed_info(filename=filename, hashed_identifier=hashed_identifier)
+        if processed_info:
+            processed_path = processed_info.get('filepath')
+            if processed_path and os.path.exists(processed_path):
+                return processed_path
+
         clip_info = self.clip_map.get(filename)
         if clip_info:
-            if isinstance(clip_info, list):
-                clip_info = clip_info[0]
-            path = clip_info.get('filepath')
-            if path and os.path.exists(path):
-                return path
-        # Fuzzy fallback: partial filename match
-        filename_lower = filename.lower()
-        for clip_name, info in self.clip_map.items():
-            if filename_lower in clip_name.lower() or clip_name.lower() in filename_lower:
-                if isinstance(info, list):
-                    info = info[0]
-                path = info.get('filepath')
+            entries = clip_info if isinstance(clip_info, list) else [clip_info]
+            for entry in entries:
+                path = entry.get('filepath')
                 if path and os.path.exists(path):
                     return path
+
+        filename_lower = filename.lower()
+        fuzzy_matches = []
+        for clip_name, info in self.clip_map.items():
+            if filename_lower in clip_name.lower() or clip_name.lower() in filename_lower:
+                entries = info if isinstance(info, list) else [info]
+                for entry in entries:
+                    path = entry.get('filepath')
+                    if path and os.path.exists(path):
+                        fuzzy_matches.append(path)
+        if len(fuzzy_matches) == 1:
+            return fuzzy_matches[0]
         return None
+
+    def _hydrate_result_metadata(self, result: Dict):
+        """Populate missing local-path metadata for a search result when possible."""
+        metadata = result.setdefault('metadata', {})
+        filename = metadata.get('file_filename', 'Unknown')
+        file_path = metadata.get('file_path') or ''
+        hashed_identifier = self._get_result_hashed_identifier(result)
+
+        processed_info = self._find_processed_info(
+            filename=filename,
+            file_path=file_path,
+            hashed_identifier=hashed_identifier,
+        )
+
+        if (not file_path or not os.path.exists(file_path)) and processed_info:
+            processed_path = processed_info.get('filepath')
+            if processed_path and os.path.exists(processed_path):
+                file_path = processed_path
+                metadata['file_path'] = file_path
+
+        if not file_path or not os.path.exists(file_path):
+            resolved_path = self._resolve_local_path(filename, hashed_identifier=hashed_identifier)
+            if resolved_path:
+                file_path = resolved_path
+                metadata['file_path'] = resolved_path
+                print(f"[Search] Resolved {filename} -> {resolved_path}")
+
+        if processed_info and processed_info.get('hashed_identifier') and not hashed_identifier:
+            metadata['hashed_identifier'] = processed_info['hashed_identifier']
+
+    def _find_matching_clip_entry(self, result: Dict) -> Optional[Dict]:
+        """Match a search result to an exact media-pool entry."""
+        self._hydrate_result_metadata(result)
+        metadata = result.get('metadata', {})
+        filename = metadata.get('file_filename', 'Unknown')
+        file_path = metadata.get('file_path')
+        normalized_file_path = self._normalize_media_path(file_path)
+
+        if normalized_file_path:
+            for entry in self._iter_clip_entries():
+                if self._normalize_media_path(entry.get('filepath')) == normalized_file_path:
+                    return entry
+
+        exact_match = self.clip_map.get(filename)
+        if isinstance(exact_match, dict):
+            return exact_match
+        if isinstance(exact_match, list) and len(exact_match) == 1:
+            return exact_match[0]
+
+        filename_lower = filename.lower()
+        fuzzy_matches = []
+        for clip_name, clip_info in self.clip_map.items():
+            clip_filename_lower = clip_name.lower()
+            if filename_lower in clip_filename_lower or clip_filename_lower in filename_lower:
+                entries = clip_info if isinstance(clip_info, list) else [clip_info]
+                fuzzy_matches.extend(entries)
+
+        if len(fuzzy_matches) == 1:
+            return fuzzy_matches[0]
+        return None
+
+    def _get_available_video_tracks(self) -> List[int]:
+        """Return the current timeline's available video tracks."""
+        if not resolve or not project:
+            return [1]
+        try:
+            timeline = project.GetCurrentTimeline()
+            if not timeline:
+                return [1]
+            track_count = max(1, int(timeline.GetTrackCount("video") or 0))
+            return list(range(1, track_count + 1))
+        except Exception:
+            return [1]
 
     def _load_thumbnail(self, label: QLabel, file_path: str, time_s: float, generation: int):
         """Load a thumbnail into a label (called via QTimer after cards are shown)."""
@@ -1809,6 +1952,7 @@ class ClipABitApp(QWidget):
         layout.setSpacing(0)
         layout.setContentsMargins(0, 0, 0, 0)
 
+        self._hydrate_result_metadata(result)
         metadata = result.get('metadata', {})
         filename = metadata.get('file_filename', 'Unknown')
         file_path = metadata.get('file_path', '') or ''
@@ -1816,14 +1960,6 @@ class ClipABitApp(QWidget):
         end_time = float(metadata.get('end_time_s', 0))
         score = result.get('score', 0)
         display_name = f"{filename[:20]}..." if len(filename) > 20 else filename
-
-        # Resolve local path: use metadata file_path if it exists, otherwise match from media pool
-        if not file_path or not os.path.exists(file_path):
-            file_path = self._resolve_local_path(filename) or ''
-            if file_path:
-                # Inject resolved path into result so preview dialog can use it
-                result.setdefault('metadata', {})['file_path'] = file_path
-                print(f"[Search] Resolved {filename} -> {file_path}")
 
         # Thumbnail placeholder — show text immediately, load real thumbnail after
         thumbnail = QLabel()
@@ -1896,7 +2032,15 @@ class ClipABitApp(QWidget):
 
     def _open_video_preview(self, result: Dict):
         """Open the video preview/trimmer dialog for a search result."""
-        dialog = VideoPreviewDialog(result, parent=self)
+        self._hydrate_result_metadata(result)
+        available_video_tracks = self._get_available_video_tracks()
+        selected_video_track = result.get('metadata', {}).get('target_video_track') or available_video_tracks[0]
+        dialog = VideoPreviewDialog(
+            result,
+            available_video_tracks=available_video_tracks,
+            selected_video_track=selected_video_track,
+            parent=self,
+        )
         dialog.insert_requested.connect(self._add_result_to_timeline)
         dialog.exec()
 
@@ -1909,21 +2053,15 @@ class ClipABitApp(QWidget):
         # Refresh media pool to ensure we have latest clips
         self._refresh_media_pool(debug=True)
         print(f"[Timeline] clip_map entries: {len(self.clip_map)}")
-            
-        def _normalize_path(path_value: Optional[str]) -> Optional[str]:
-            if not path_value:
-                return None
-            try:
-                return os.path.normcase(os.path.normpath(path_value))
-            except Exception:
-                return path_value
 
         metadata = result.get('metadata', {})
         filename = metadata.get('file_filename', 'Unknown')
+        target_video_track = max(1, int(metadata.get('target_video_track') or 1))
+        matching_clip_info = self._find_matching_clip_entry(result)
         file_path = metadata.get('file_path')
-        normalized_file_path = _normalize_path(file_path)
         print(f"[Timeline] Target filename: {filename}")
         print(f"[Timeline] Target file_path: {file_path}")
+        print(f"[Timeline] Target video track: V{target_video_track}")
         start_time = metadata.get('start_time_s', 0)
         end_time = metadata.get('end_time_s', 0)
 
@@ -1936,57 +2074,21 @@ class ClipABitApp(QWidget):
             QMessageBox.warning(self, "Error", f"Invalid time range metadata for {filename}.")
             return
         
-        # Find the clip in media pool
-        matching_clip = None
-        matching_clip_info = None
-        if normalized_file_path:
-            for _, clip_info in self.clip_map.items():
-                if isinstance(clip_info, list):
-                    for entry in clip_info:
-                        if _normalize_path(entry.get('filepath')) == normalized_file_path:
-                            matching_clip_info = entry
-                            matching_clip = entry.get('media_pool_item')
-                            break
-                else:
-                    if _normalize_path(clip_info.get('filepath')) == normalized_file_path:
-                        matching_clip_info = clip_info
-                        matching_clip = clip_info.get('media_pool_item')
-                if matching_clip:
-                    break
-
-        if not matching_clip:
-            filename_lower = filename.lower()
-            for clip_filename, clip_info in self.clip_map.items():
-                clip_filename_lower = clip_filename.lower()
-                if filename_lower in clip_filename_lower or clip_filename_lower in filename_lower:
-                    if isinstance(clip_info, list):
-                        matching_clip_info = clip_info[0]
-                    else:
-                        matching_clip_info = clip_info
-                    matching_clip = matching_clip_info['media_pool_item']
-                    break
-                
+        matching_clip = matching_clip_info.get('media_pool_item') if matching_clip_info else None
         if not matching_clip:
             # Debug logging to diagnose mismatches
             print("[Timeline] Failed to match clip in media pool")
             print(f"[Timeline] Result filename: {filename}")
             print(f"[Timeline] Result file_path: {file_path}")
+            print(f"[Timeline] Result hashed_identifier: {self._get_result_hashed_identifier(result)}")
             sample_paths = []
             total_paths = 0
-            for _, clip_info in self.clip_map.items():
-                if isinstance(clip_info, list):
-                    for entry in clip_info:
-                        path = entry.get('filepath')
-                        if path:
-                            total_paths += 1
-                            if len(sample_paths) < 5:
-                                sample_paths.append(path)
-                else:
-                    path = clip_info.get('filepath')
-                    if path:
-                        total_paths += 1
-                        if len(sample_paths) < 5:
-                            sample_paths.append(path)
+            for entry in self._iter_clip_entries():
+                path = entry.get('filepath')
+                if path:
+                    total_paths += 1
+                    if len(sample_paths) < 5:
+                        sample_paths.append(path)
             print(f"[Timeline] Media pool file paths: {total_paths} total")
             for p in sample_paths:
                 print(f"[Timeline] Sample path: {p}")
@@ -2060,50 +2162,68 @@ class ClipABitApp(QWidget):
 
             print(f"[Timeline] Using fps={fps}, start_frame={start_frame}, end_frame={end_frame}, clip_frames={clip_frames}")
 
-            # Ensure at least one video/audio track exists (AppendToTimeline can fail on empty timelines)
+            # Ensure the requested video track and at least one audio track exist.
             try:
-                if timeline and int(timeline.GetTrackCount("video") or 0) == 0:
-                    timeline.AddTrack("video")
-                    print("[Timeline] Added missing video track 1.")
-                if timeline and int(timeline.GetTrackCount("audio") or 0) == 0:
-                    timeline.AddTrack("audio")
-                    print("[Timeline] Added missing audio track 1.")
+                if timeline:
+                    current_video_tracks = int(timeline.GetTrackCount("video") or 0)
+                    while current_video_tracks < target_video_track:
+                        timeline.AddTrack("video")
+                        current_video_tracks += 1
+                        print(f"[Timeline] Added missing video track {current_video_tracks}.")
+
+                    if int(timeline.GetTrackCount("audio") or 0) == 0:
+                        timeline.AddTrack("audio")
+                        print("[Timeline] Added missing audio track 1.")
             except Exception as e:
                 print(f"[Timeline] Failed to ensure video track: {e}")
 
-            # Best-effort track selection (blue source + red target) with diagnostics only.
+            # Best-effort track targeting for timelines with multiple video tracks.
             if timeline:
                 enable_fn = getattr(timeline, "SetTrackEnable", None)
                 autoselect_fn = getattr(timeline, "SetTrackAutoSelect", None)
                 lock_fn = getattr(timeline, "SetTrackLock", None)
+                video_track_count = int(timeline.GetTrackCount("video") or 0)
+                audio_track_count = int(timeline.GetTrackCount("audio") or 0)
                 print(
                     "[Timeline] Track methods:",
                     f"Enable={callable(enable_fn)}, AutoSelect={callable(autoselect_fn)}, Lock={callable(lock_fn)}"
                 )
-                for track_type in ("video", "audio"):
-                    for name, fn, args in (
-                        ("Enable", enable_fn, (track_type, 1, True)),
-                        ("AutoSelect", autoselect_fn, (track_type, 1, True)),
-                        ("Lock", lock_fn, (track_type, 1, False)),
+                for track_index in range(1, video_track_count + 1):
+                    for name, fn, enabled in (
+                        ("Enable", enable_fn, True),
+                        ("AutoSelect", autoselect_fn, track_index == target_video_track),
+                        ("Lock", lock_fn, False),
                     ):
                         if not callable(fn):
                             continue
                         try:
-                            result = fn(*args)
-                            print(f"[Timeline] {name} {track_type}1 -> {result}")
+                            result = fn("video", track_index, enabled)
+                            print(f"[Timeline] {name} video{track_index} -> {result}")
                         except Exception as e:
-                            print(f"[Timeline] {name} {track_type}1 failed: {e}")
+                            print(f"[Timeline] {name} video{track_index} failed: {e}")
+
+                for track_index in range(1, max(audio_track_count, 1) + 1):
+                    for name, fn, enabled in (
+                        ("Enable", enable_fn, True),
+                        ("AutoSelect", autoselect_fn, track_index == 1),
+                        ("Lock", lock_fn, False),
+                    ):
+                        if not callable(fn):
+                            continue
+                        try:
+                            result = fn("audio", track_index, enabled)
+                            print(f"[Timeline] {name} audio{track_index} -> {result}")
+                        except Exception as e:
+                            print(f"[Timeline] {name} audio{track_index} failed: {e}")
 
             before_count = _count_timeline_items(timeline) if timeline else None
             print(f"[Timeline] Items before append: {before_count}")
 
-            clip_info = {
+            base_clip_info = {
                 "mediaPoolItem": matching_clip,
                 "startFrame": start_frame,
                 "endFrame": end_frame,
             }
-            result = media_pool.AppendToTimeline([clip_info])
-            print(f"[Timeline] AppendToTimeline result: {result!r} (type={type(result).__name__})")
 
             def _is_append_success(value) -> bool:
                 if value is True:
@@ -2112,24 +2232,34 @@ class ClipABitApp(QWidget):
                     return any(item is not None for item in value)
                 return bool(value)
 
-            success = _is_append_success(result)
-            if not success:
-                print("[Timeline] Timed append failed, trying full clip fallback.")
-                result_fallback = media_pool.AppendToTimeline([matching_clip])
-                print(f"[Timeline] Fallback AppendToTimeline result: {result_fallback!r} (type={type(result_fallback).__name__})")
-                success = _is_append_success(result_fallback)
+            append_attempts = [
+                ("targeted append", [{**base_clip_info, "trackIndex": target_video_track}]),
+                ("patched append", [dict(base_clip_info)]),
+            ]
+            if target_video_track == 1:
+                append_attempts.append(("full clip fallback", [matching_clip]))
+
+            success = False
+            for attempt_name, payload in append_attempts:
+                result_value = media_pool.AppendToTimeline(payload)
+                print(f"[Timeline] {attempt_name} result: {result_value!r} (type={type(result_value).__name__})")
+                success = _is_append_success(result_value)
+                if success:
+                    break
 
             after_count = _count_timeline_items(timeline) if timeline else None
             print(f"[Timeline] Items after append: {after_count}")
 
             if success:
-                self.status_label.setText(f"Added {filename} ({start_time:.1f}s-{end_time:.1f}s) to timeline")
+                self.status_label.setText(
+                    f"Added {filename} ({start_time:.1f}s-{end_time:.1f}s) to V{target_video_track}"
+                )
             else:
                 print("[Timeline] AppendToTimeline returned False")
                 QMessageBox.warning(
                     self,
                     "Failed to Add Clip",
-                    "Resolve could not insert the clip. If this is an empty timeline, "
+                    f"Resolve could not insert the clip onto V{target_video_track}. If this is an empty timeline, "
                     "please enable Edit -> Edit Options -> Automatically Create Tracks on Edit, "
                     "or drag any clip into the timeline once to initialize track patching."
                 )
