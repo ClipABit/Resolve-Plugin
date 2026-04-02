@@ -664,7 +664,7 @@ class ClipABitApp(QWidget):
         # Search input
         self.search_input = QLineEdit()
         self.search_input.setObjectName("searchInput")
-        self.search_input.setPlaceholderText("Enter search query (e.g. 'woman walking', 'car driving')")
+        self.search_input.setPlaceholderText("Search through your videos...")
         self.search_input.returnPressed.connect(self._perform_search)
         layout.addWidget(self.search_input, 1)
         
@@ -1149,21 +1149,15 @@ class ClipABitApp(QWidget):
     
     def _get_file_status_text(self):
         """Get the file status text for display."""
-        total = len(self.clip_map)
-        processed = 0
-        project_files = self._get_project_processed_files()
-        for clip_info in self.clip_map.values():
-            if isinstance(clip_info, list):
-                for clip in clip_info:
-                    filepath = clip.get('filepath')
-                    if filepath and get_file_hash(filepath) in project_files:
-                        processed += 1
-            else:
-                filepath = clip_info.get('filepath')
-                if filepath and get_file_hash(filepath) in project_files:
-                    processed += 1
-        new_files = total - processed
-        return f"Total: {total} files | Processed: {processed} | New: {new_files}"
+        stats = self._get_upload_file_stats()
+        status_parts = [
+            f"Total: {stats['total']} files",
+            f"Processed: {stats['processed']}",
+            f"New: {stats['new']}",
+        ]
+        if stats['queued'] > 0:
+            status_parts.append(f"Queued: {stats['queued']}")
+        return " | ".join(status_parts)
     
     def _update_jobs_list_widget(self, list_widget):
         """Update a jobs list widget with current jobs."""
@@ -1187,38 +1181,14 @@ class ClipABitApp(QWidget):
 
     def _update_file_status(self):
         """Update the file status display."""
-        total_files = len(self.clip_map)
-        processed_count = 0
-        new_files = []
-        project_files = self._get_project_processed_files()
-        
-        for filename, clip_info in self.clip_map.items():
-            if isinstance(clip_info, list):
-                # Handle multiple clips with same filename
-                for clip in clip_info:
-                    filepath = clip.get('filepath')
-                    if filepath:
-                        file_hash = get_file_hash(filepath)
-                        if file_hash in project_files:
-                            processed_count += 1
-                        else:
-                            new_files.append(filename)
-            else:
-                filepath = clip_info.get('filepath')
-                if filepath:
-                    file_hash = get_file_hash(filepath)
-                    if file_hash in project_files:
-                        processed_count += 1
-                    else:
-                        new_files.append(filename)
-        
-        new_count = len(set(new_files))
-        queued_count = len(self.upload_queue)
-        
+        stats = self._get_upload_file_stats()
+
         # Update status text to include queue info
-        status_parts = [f"Files: {total_files} total, {processed_count} processed, {new_count} new"]
-        if queued_count > 0:
-            status_parts.append(f"{queued_count} queued")
+        status_parts = [
+            f"Files: {stats['total']} total, {stats['processed']} processed, {stats['new']} new"
+        ]
+        if stats['queued'] > 0:
+            status_parts.append(f"{stats['queued']} queued")
         if self.is_uploading:
             status_parts.append("uploading...")
             
@@ -1237,6 +1207,62 @@ class ClipABitApp(QWidget):
             self.dialog_file_status = None
         except Exception as e:
             print(f"[UI] Error updating file status: {e}")
+
+    def _get_upload_file_stats(self) -> dict:
+        """Return uniform upload stats for media-pool clips that are actually eligible."""
+        project_files = self._get_project_processed_files()
+        eligible_entries = []
+        seen_paths = set()
+        missing_count = 0
+
+        def collect_entry(entry):
+            nonlocal missing_count
+            filepath = entry.get('filepath')
+            if not filepath:
+                missing_count += 1
+                return
+            if filepath in seen_paths:
+                return
+            seen_paths.add(filepath)
+
+            if not os.path.exists(filepath):
+                missing_count += 1
+                return
+
+            eligible_entries.append({
+                'filepath': filepath,
+                'filename': os.path.basename(filepath),
+                'hash': get_file_hash(filepath),
+            })
+
+        for clip_info in self.clip_map.values():
+            if isinstance(clip_info, list):
+                for entry in clip_info:
+                    collect_entry(entry)
+            else:
+                collect_entry(clip_info)
+
+        processed_count = 0
+        queued_count = 0
+        available_entries = []
+
+        for entry in eligible_entries:
+            file_hash = entry['hash']
+            if file_hash in project_files:
+                processed_count += 1
+            elif self._is_file_being_processed(file_hash):
+                queued_count += 1
+            else:
+                available_entries.append(entry)
+
+        return {
+            'total': len(eligible_entries),
+            'processed': processed_count,
+            'queued': queued_count,
+            'new': len(available_entries),
+            'available_entries': available_entries,
+            'missing': missing_count,
+        }
         
     def _select_files_to_upload(self):
         """Select media pool clips and add them to the upload queue."""
@@ -1247,49 +1273,11 @@ class ClipABitApp(QWidget):
         # Refresh media pool so we show the latest clips
         self._refresh_media_pool(debug=False)
 
-        files_to_upload = []
-        skipped_processed = 0
-        skipped_queued = 0
-        skipped_missing = 0
-        seen_paths = set()
-
-        def collect_candidate(entry):
-            nonlocal skipped_processed, skipped_queued, skipped_missing
-            filepath = entry.get('filepath')
-            if not filepath:
-                skipped_missing += 1
-                return
-            if filepath in seen_paths:
-                return
-            seen_paths.add(filepath)
-
-            if not os.path.exists(filepath):
-                skipped_missing += 1
-                return
-
-            filename = os.path.basename(filepath)
-            file_hash = get_file_hash(filepath)
-
-            if file_hash in self._get_project_processed_files():
-                skipped_processed += 1
-                return
-
-            if self._is_file_being_processed(file_hash):
-                skipped_queued += 1
-                return
-
-            files_to_upload.append({
-                'filepath': filepath,
-                'filename': filename,
-                'hash': file_hash
-            })
-
-        for _, clip_info in self.clip_map.items():
-            if isinstance(clip_info, list):
-                for entry in clip_info:
-                    collect_candidate(entry)
-            else:
-                collect_candidate(clip_info)
+        stats = self._get_upload_file_stats()
+        files_to_upload = stats['available_entries']
+        skipped_processed = stats['processed']
+        skipped_queued = stats['queued']
+        skipped_missing = stats['missing']
 
         if not files_to_upload:
             QMessageBox.information(
