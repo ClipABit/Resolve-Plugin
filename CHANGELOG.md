@@ -1,21 +1,8 @@
-## [1.4.0](https://github.com/ClipABit/Resolve-Plugin/compare/v1.3.0...v1.4.0) (2026-04-01)
-
-### Features
-
-* enforces conventional commit for PR title ([#52](https://github.com/ClipABit/Resolve-Plugin/issues/52)) ([de87959](https://github.com/ClipABit/Resolve-Plugin/commit/de879595e7a39a45e2cc511979fe7effc9c4442f))
-* moves file upload away from module ([b086b20](https://github.com/ClipABit/Resolve-Plugin/commit/b086b205106a128d791f680a10780dcfe279edea))
-* removes migrate button in staging ([#62](https://github.com/ClipABit/Resolve-Plugin/issues/62)) ([b3ee2ee](https://github.com/ClipABit/Resolve-Plugin/commit/b3ee2ee81d3f9db7ead1c7ead7dc94b933bd8603))
+## [1.4.0-staging.10](https://github.com/ClipABit/Resolve-Plugin/compare/v1.4.0-staging.9...v1.4.0-staging.10) (2026-04-02)
 
 ### Bug Fixes
 
-* add config defaults to localhost instead of Modal dev URLs ([#56](https://github.com/ClipABit/Resolve-Plugin/issues/56)) ([6f78fbf](https://github.com/ClipABit/Resolve-Plugin/commit/6f78fbfe1f2d8482b9e4e171daa44eb400c51b76))
-* Fixed Updater Bugs ([#54](https://github.com/ClipABit/Resolve-Plugin/issues/54)) ([bd950f2](https://github.com/ClipABit/Resolve-Plugin/commit/bd950f21bd2f8a4a5de22ec1dc2f6dbbbfbfa505))
-* multiple windows ([#57](https://github.com/ClipABit/Resolve-Plugin/issues/57)) ([8567fa7](https://github.com/ClipABit/Resolve-Plugin/commit/8567fa768ef28fbff3159f3fd271af37f599064c))
-* resolves plugin usability bugs ([#61](https://github.com/ClipABit/Resolve-Plugin/issues/61)) ([7b556f8](https://github.com/ClipABit/Resolve-Plugin/commit/7b556f883d3b8351b0e96e541d24ff53de2d7529)), closes [#49](https://github.com/ClipABit/Resolve-Plugin/issues/49)
-* resolves process upload filename missing ([#58](https://github.com/ClipABit/Resolve-Plugin/issues/58)) ([81cff91](https://github.com/ClipABit/Resolve-Plugin/commit/81cff911083445e82c7a52629cb3314a2029b305))
-* scopes processed/upload files to project ([#55](https://github.com/ClipABit/Resolve-Plugin/issues/55)) ([b4139e6](https://github.com/ClipABit/Resolve-Plugin/commit/b4139e63fd8e9b2dfab1e761130d7d492202822d))
-* subfolder upload and search ([#53](https://github.com/ClipABit/Resolve-Plugin/issues/53)) ([d0ddc29](https://github.com/ClipABit/Resolve-Plugin/commit/d0ddc295ea36c07cfb87b85c18a810ff9c0e9e21)), closes [#49](https://github.com/ClipABit/Resolve-Plugin/issues/49)
-* uses video mime type instead of hardcoded mp4 ([#59](https://github.com/ClipABit/Resolve-Plugin/issues/59)) ([4fcb7e2](https://github.com/ClipABit/Resolve-Plugin/commit/4fcb7e2a7329f87f9ab61edb753739d6c490bc7c))
+* visual bugs ([#65](https://github.com/ClipABit/Resolve-Plugin/issues/65)) ([6b5aadf](https://github.com/ClipABit/Resolve-Plugin/commit/6b5aadf0fde5ba6b9c680de70a053b5774df051d))
 
 ## [1.4.0-staging.9](https://github.com/ClipABit/Resolve-Plugin/compare/v1.4.0-staging.8...v1.4.0-staging.9) (2026-04-01)
 
