@@ -3,7 +3,7 @@ from typing import Dict
 
 from PyQt6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
-    QSlider, QWidget, QSizePolicy, QComboBox,
+    QSlider, QWidget, QSizePolicy,
 )
 from PyQt6.QtCore import Qt, QUrl, QTimer, QObject, pyqtSignal
 from PyQt6.QtMultimedia import QMediaPlayer, QAudioOutput
@@ -113,7 +113,7 @@ class VideoPreviewDialog(QDialog):
     """Modal dialog for previewing and trimming a video clip before timeline insertion."""
     insert_requested = pyqtSignal(dict)  # emits modified result dict with adjusted times
 
-    def __init__(self, result: Dict, available_video_tracks=None, selected_video_track=1, parent=None):
+    def __init__(self, result: Dict, parent=None):
         super().__init__(parent)
         self.result = result
         self.metadata = result.get('metadata', {})
@@ -121,8 +121,6 @@ class VideoPreviewDialog(QDialog):
         self.filename = self.metadata.get('file_filename', 'Unknown')
         self.chunk_start = float(self.metadata.get('start_time_s', 0))
         self.chunk_end = float(self.metadata.get('end_time_s', 0))
-        self.available_video_tracks = available_video_tracks or [1]
-        self.selected_video_track = selected_video_track or 1
 
         self.video_start = 0.0
         self.video_duration = 0.0
@@ -179,15 +177,6 @@ class VideoPreviewDialog(QDialog):
             }}
             QPushButton#playBtn:hover {{
                 background-color: {t['border']};
-            }}
-            QComboBox {{
-                background-color: {t['card_bg']};
-                color: {t['text']};
-                border: 1px solid {t['border']};
-                border-radius: 6px;
-                padding: 8px 12px;
-                font-size: 12px;
-                min-width: 88px;
             }}
         """)
 
@@ -289,24 +278,9 @@ class VideoPreviewDialog(QDialog):
         self.chunk_label.setStyleSheet(f"color: {t['text_secondary']}; font-size: 11px;")
         layout.addWidget(self.chunk_label)
 
-        # Track selector + insert button
+        # Insert button
         btn_row = QHBoxLayout()
-        btn_row.setSpacing(10)
         btn_row.addStretch()
-
-        track_label = QLabel("Video Track")
-        track_label.setStyleSheet(f"color: {t['text_secondary']}; font-size: 12px; font-weight: 600;")
-        btn_row.addWidget(track_label)
-
-        self.track_selector = QComboBox()
-        for track_num in self.available_video_tracks:
-            self.track_selector.addItem(f"V{track_num}", track_num)
-        selected_index = self.track_selector.findData(self.selected_video_track)
-        if selected_index >= 0:
-            self.track_selector.setCurrentIndex(selected_index)
-        self.track_selector.setEnabled(len(self.available_video_tracks) > 1)
-        btn_row.addWidget(self.track_selector)
-
         self.btn_insert = QPushButton("Insert to Timeline")
         self.btn_insert.setFixedHeight(40)
         self.btn_insert.setFixedWidth(200)
@@ -487,7 +461,6 @@ class VideoPreviewDialog(QDialog):
         modified['metadata'] = dict(self.metadata)
         modified['metadata']['start_time_s'] = self.trim_start
         modified['metadata']['end_time_s'] = self.trim_end
-        modified['metadata']['target_video_track'] = self.track_selector.currentData()
         self.insert_requested.emit(modified)
         self._cleanup()
         self.accept()
@@ -563,7 +536,6 @@ class ThumbnailExtractor(QObject):
 
     def _on_frame(self, frame):
         from PyQt6.QtCore import QSize
-        from PyQt6.QtGui import QImage
         if not self._seeked or self._done:
             return
         if frame.isValid():
@@ -577,7 +549,7 @@ class ThumbnailExtractor(QObject):
                 )
                 x = (scaled.width() - w) // 2
                 y = (scaled.height() - h) // 2
-                cropped = scaled.copy(x, y, w, h).convertToFormat(QImage.Format.Format_RGB32)
+                cropped = scaled.copy(x, y, w, h)
                 pixmap = self._QPixmap.fromImage(cropped)
                 print(f"[Thumbnail] Captured frame at {self._player.position()}ms")
                 self._finish(pixmap)

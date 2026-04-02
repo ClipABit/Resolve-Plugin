@@ -153,9 +153,6 @@ class ClipABitApp(QWidget):
         self._search_generation = 0  # Incremented on clear to cancel pending thumbnail loads
         self.dialog_jobs_list = None
         self.dialog_file_status = None
-        self.upload_zone = None
-        self.empty_state_label = None
-        self.media_pool_badge = None
         
         # Upload queue system
         self.upload_queue = []  # List of files waiting to be uploaded
@@ -364,7 +361,6 @@ class ClipABitApp(QWidget):
         self.results_scroll.setWidget(self.results_container)
         layout.addWidget(self.results_scroll, 1)
 
-        self._update_idle_state_visibility()
         content.setLayout(layout)
         return content
     
@@ -405,9 +401,6 @@ class ClipABitApp(QWidget):
         self.btn_jobs_debug.setVisible(is_logged_in)
         self.btn_auth.setVisible(is_logged_in)
         self.logo_widget.setVisible(is_logged_in)
-        self._update_media_pool_badge()
-        QTimer.singleShot(0, self._update_media_pool_badge)
-        self._update_idle_state_visibility()
 
     
     def _create_header(self):
@@ -444,11 +437,6 @@ class ClipABitApp(QWidget):
         self.btn_media_pool = QPushButton("Media Pool")
         self.btn_media_pool.setObjectName("headerButtonSecondary")
         self.btn_media_pool.clicked.connect(self._show_upload_dialog)
-        self.media_pool_badge = QLabel("", self.btn_media_pool)
-        self.media_pool_badge.setObjectName("mediaPoolBadge")
-        self.media_pool_badge.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.media_pool_badge.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
-        self.media_pool_badge.hide()
         layout.addWidget(self.btn_media_pool)
         
         # Small info icon button (top-right action)
@@ -676,7 +664,7 @@ class ClipABitApp(QWidget):
         # Search input
         self.search_input = QLineEdit()
         self.search_input.setObjectName("searchInput")
-        self.search_input.setPlaceholderText("Search through your videos...")
+        self.search_input.setPlaceholderText("Enter search query (e.g. 'woman walking', 'car driving')")
         self.search_input.returnPressed.connect(self._perform_search)
         layout.addWidget(self.search_input, 1)
         
@@ -746,33 +734,15 @@ class ClipABitApp(QWidget):
         zone_layout.addWidget(helper_text)
         self.upload_zone.setLayout(zone_layout)
         self.results_layout.addWidget(self.upload_zone, alignment=Qt.AlignmentFlag.AlignCenter)
-
-        self.empty_state_label = QLabel("no queries made yet.")
-        self.empty_state_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.empty_state_label.setObjectName("emptyState")
-        self.empty_state_label.setVisible(False)
-        self.results_layout.addWidget(self.empty_state_label)
-
         # Re-apply stylesheet so new widgets pick up styles
         self._apply_theme()
-        self._update_idle_state_visibility()
-
-    def _update_idle_state_visibility(self):
-        """Show the upload empty-state only until the first project file is processed."""
-        has_query = bool(self.search_input.text().strip()) if hasattr(self, 'search_input') else False
-        has_processed = len(self._get_project_processed_files()) > 0
-        show_upload_zone = not has_query and not has_processed
-        show_empty_state = not has_query and has_processed
-
-        if self.upload_zone and self.upload_zone.parent():
-            self.upload_zone.setVisible(show_upload_zone)
-        if self.empty_state_label and self.empty_state_label.parent():
-            self.empty_state_label.setVisible(show_empty_state)
-
+    
     def _on_search_text_changed(self, text):
         """Show/hide clear button and upload zone based on search input text."""
         self.btn_clear_search.setVisible(bool(text))
-        self._update_idle_state_visibility()
+        # Hide upload zone as soon as user starts typing
+        if hasattr(self, 'upload_zone') and self.upload_zone:
+            self.upload_zone.setVisible(not bool(text))
 
     def _build_namespace(self) -> str:
         """Build the namespace string from device id and project name."""
@@ -868,15 +838,6 @@ class ClipABitApp(QWidget):
             }}
             QPushButton#headerButtonSecondary:hover {{
                 background-color: #7B8794;
-            }}
-
-            QLabel#mediaPoolBadge {{
-                background-color: #FF3B30;
-                color: #FFFFFF;
-                border-radius: 9px;
-                font-size: 10px;
-                font-weight: 700;
-                padding: 0 4px;
             }}
 
             /* Compact info icon button */
@@ -1117,12 +1078,12 @@ class ClipABitApp(QWidget):
         info_title.setStyleSheet("font-size: 18px; font-weight: bold;")
         layout.addWidget(info_title)
         
-        if Config.ENVIRONMENT != "prod":
-            storage_path = get_storage_path()
-            storage_label = QLabel(f"Storage: {storage_path}")
-            storage_label.setWordWrap(True)
-            storage_label.setStyleSheet("color: #8E8E93; font-size: 11px;")
-            layout.addWidget(storage_label)
+        # Storage path
+        storage_path = get_storage_path()
+        storage_label = QLabel(f"Storage: {storage_path}")
+        storage_label.setWordWrap(True)
+        storage_label.setStyleSheet("color: #8E8E93; font-size: 11px;")
+        layout.addWidget(storage_label)
         
         # Processed files count
         processed_label = QLabel(f"Processed: {len(self._get_project_processed_files())} files")
@@ -1188,15 +1149,21 @@ class ClipABitApp(QWidget):
     
     def _get_file_status_text(self):
         """Get the file status text for display."""
-        stats = self._get_upload_file_stats()
-        status_parts = [
-            f"Total: {stats['total']} files",
-            f"Processed: {stats['processed']}",
-            f"New: {stats['new']}",
-        ]
-        if stats['queued'] > 0:
-            status_parts.append(f"Queued: {stats['queued']}")
-        return " | ".join(status_parts)
+        total = len(self.clip_map)
+        processed = 0
+        project_files = self._get_project_processed_files()
+        for clip_info in self.clip_map.values():
+            if isinstance(clip_info, list):
+                for clip in clip_info:
+                    filepath = clip.get('filepath')
+                    if filepath and get_file_hash(filepath) in project_files:
+                        processed += 1
+            else:
+                filepath = clip_info.get('filepath')
+                if filepath and get_file_hash(filepath) in project_files:
+                    processed += 1
+        new_files = total - processed
+        return f"Total: {total} files | Processed: {processed} | New: {new_files}"
     
     def _update_jobs_list_widget(self, list_widget):
         """Update a jobs list widget with current jobs."""
@@ -1220,16 +1187,38 @@ class ClipABitApp(QWidget):
 
     def _update_file_status(self):
         """Update the file status display."""
-        stats = self._get_upload_file_stats()
-        self._update_media_pool_badge(stats)
-        self._update_idle_state_visibility()
-
+        total_files = len(self.clip_map)
+        processed_count = 0
+        new_files = []
+        project_files = self._get_project_processed_files()
+        
+        for filename, clip_info in self.clip_map.items():
+            if isinstance(clip_info, list):
+                # Handle multiple clips with same filename
+                for clip in clip_info:
+                    filepath = clip.get('filepath')
+                    if filepath:
+                        file_hash = get_file_hash(filepath)
+                        if file_hash in project_files:
+                            processed_count += 1
+                        else:
+                            new_files.append(filename)
+            else:
+                filepath = clip_info.get('filepath')
+                if filepath:
+                    file_hash = get_file_hash(filepath)
+                    if file_hash in project_files:
+                        processed_count += 1
+                    else:
+                        new_files.append(filename)
+        
+        new_count = len(set(new_files))
+        queued_count = len(self.upload_queue)
+        
         # Update status text to include queue info
-        status_parts = [
-            f"Files: {stats['total']} total, {stats['processed']} processed, {stats['new']} new"
-        ]
-        if stats['queued'] > 0:
-            status_parts.append(f"{stats['queued']} queued")
+        status_parts = [f"Files: {total_files} total, {processed_count} processed, {new_count} new"]
+        if queued_count > 0:
+            status_parts.append(f"{queued_count} queued")
         if self.is_uploading:
             status_parts.append("uploading...")
             
@@ -1248,85 +1237,6 @@ class ClipABitApp(QWidget):
             self.dialog_file_status = None
         except Exception as e:
             print(f"[UI] Error updating file status: {e}")
-
-    def _get_upload_file_stats(self) -> dict:
-        """Return uniform upload stats for media-pool clips that are actually eligible."""
-        project_files = self._get_project_processed_files()
-        eligible_entries = []
-        seen_paths = set()
-        missing_count = 0
-
-        def collect_entry(entry):
-            nonlocal missing_count
-            filepath = entry.get('filepath')
-            if not filepath:
-                missing_count += 1
-                return
-            if filepath in seen_paths:
-                return
-            seen_paths.add(filepath)
-
-            if not os.path.exists(filepath):
-                missing_count += 1
-                return
-
-            eligible_entries.append({
-                'filepath': filepath,
-                'filename': os.path.basename(filepath),
-                'hash': get_file_hash(filepath),
-            })
-
-        for clip_info in self.clip_map.values():
-            if isinstance(clip_info, list):
-                for entry in clip_info:
-                    collect_entry(entry)
-            else:
-                collect_entry(clip_info)
-
-        processed_count = 0
-        queued_count = 0
-        available_entries = []
-
-        for entry in eligible_entries:
-            file_hash = entry['hash']
-            if file_hash in project_files:
-                processed_count += 1
-            elif self._is_file_being_processed(file_hash):
-                queued_count += 1
-            else:
-                available_entries.append(entry)
-
-        return {
-            'total': len(eligible_entries),
-            'processed': processed_count,
-            'queued': queued_count,
-            'new': len(available_entries),
-            'available_entries': available_entries,
-            'missing': missing_count,
-        }
-
-    def _update_media_pool_badge(self, stats: Optional[dict] = None):
-        """Show a compact badge for newly available media-pool files."""
-        if not getattr(self, 'media_pool_badge', None) or not getattr(self, 'btn_media_pool', None):
-            return
-
-        if not (self.auth_manager and self.auth_manager.is_logged_in()):
-            self.media_pool_badge.hide()
-            return
-
-        if stats is None:
-            stats = self._get_upload_file_stats()
-
-        if stats['processed'] > 0 and stats['new'] > 0:
-            text = str(stats['new'])
-            width = max(18, self.media_pool_badge.fontMetrics().horizontalAdvance(text) + 10)
-            self.media_pool_badge.setText(text)
-            self.media_pool_badge.setFixedSize(width, 18)
-            self.media_pool_badge.move(max(0, self.btn_media_pool.width() - width - 4), 2)
-            self.media_pool_badge.raise_()
-            self.media_pool_badge.show()
-        else:
-            self.media_pool_badge.hide()
         
     def _select_files_to_upload(self):
         """Select media pool clips and add them to the upload queue."""
@@ -1337,11 +1247,49 @@ class ClipABitApp(QWidget):
         # Refresh media pool so we show the latest clips
         self._refresh_media_pool(debug=False)
 
-        stats = self._get_upload_file_stats()
-        files_to_upload = stats['available_entries']
-        skipped_processed = stats['processed']
-        skipped_queued = stats['queued']
-        skipped_missing = stats['missing']
+        files_to_upload = []
+        skipped_processed = 0
+        skipped_queued = 0
+        skipped_missing = 0
+        seen_paths = set()
+
+        def collect_candidate(entry):
+            nonlocal skipped_processed, skipped_queued, skipped_missing
+            filepath = entry.get('filepath')
+            if not filepath:
+                skipped_missing += 1
+                return
+            if filepath in seen_paths:
+                return
+            seen_paths.add(filepath)
+
+            if not os.path.exists(filepath):
+                skipped_missing += 1
+                return
+
+            filename = os.path.basename(filepath)
+            file_hash = get_file_hash(filepath)
+
+            if file_hash in self._get_project_processed_files():
+                skipped_processed += 1
+                return
+
+            if self._is_file_being_processed(file_hash):
+                skipped_queued += 1
+                return
+
+            files_to_upload.append({
+                'filepath': filepath,
+                'filename': filename,
+                'hash': file_hash
+            })
+
+        for _, clip_info in self.clip_map.items():
+            if isinstance(clip_info, list):
+                for entry in clip_info:
+                    collect_candidate(entry)
+            else:
+                collect_candidate(clip_info)
 
         if not files_to_upload:
             QMessageBox.information(
@@ -1755,168 +1703,25 @@ class ClipABitApp(QWidget):
             elif item.layout():
                 self._clear_layout(item.layout())
         
-    def _normalize_media_path(self, path_value: Optional[str]) -> Optional[str]:
-        """Normalize a media file path for reliable comparisons."""
-        if not path_value:
-            return None
-        try:
-            return os.path.normcase(os.path.normpath(path_value))
-        except Exception:
-            return path_value
-
-    def _iter_clip_entries(self):
-        """Yield normalized clip-map entries one by one."""
-        for clip_info in self.clip_map.values():
-            if isinstance(clip_info, list):
-                for entry in clip_info:
-                    yield entry
-            else:
-                yield clip_info
-
-    def _get_result_hashed_identifier(self, result: Dict) -> Optional[str]:
-        """Return a stable backend identifier from a search result when available."""
-        metadata = result.get('metadata', {})
-        for container in (metadata, result):
-            if not isinstance(container, dict):
-                continue
-            for key in ("hashed_identifier", "hashedIdentifier"):
-                value = container.get(key)
-                if value:
-                    return value
-        return None
-
-    def _find_processed_info(
-        self,
-        filename: str = "",
-        file_path: Optional[str] = None,
-        hashed_identifier: Optional[str] = None,
-    ) -> Optional[Dict]:
-        """Find the best matching processed-file record for a search result."""
-        project_files = self._get_project_processed_files()
-        normalized_file_path = self._normalize_media_path(file_path)
-
-        if hashed_identifier:
-            for info in project_files.values():
-                if info.get('hashed_identifier') == hashed_identifier:
-                    return info
-
-        if normalized_file_path:
-            for info in project_files.values():
-                if self._normalize_media_path(info.get('filepath')) == normalized_file_path:
-                    return info
-
-        if filename:
-            exact_matches = []
-            for info in project_files.values():
-                info_filename = info.get('filename') or os.path.basename(info.get('filepath', ''))
-                if info_filename == filename and info.get('filepath') and os.path.exists(info.get('filepath')):
-                    exact_matches.append(info)
-            if len(exact_matches) == 1:
-                return exact_matches[0]
-
-        return None
-
-    def _resolve_local_path(self, filename: str, hashed_identifier: Optional[str] = None) -> Optional[str]:
-        """Look up a filename in processed files / media pool and return its local path."""
-        processed_info = self._find_processed_info(filename=filename, hashed_identifier=hashed_identifier)
-        if processed_info:
-            processed_path = processed_info.get('filepath')
-            if processed_path and os.path.exists(processed_path):
-                return processed_path
-
+    def _resolve_local_path(self, filename: str) -> Optional[str]:
+        """Look up a filename in the media pool clip_map and return its local file path."""
         clip_info = self.clip_map.get(filename)
         if clip_info:
-            entries = clip_info if isinstance(clip_info, list) else [clip_info]
-            for entry in entries:
-                path = entry.get('filepath')
-                if path and os.path.exists(path):
-                    return path
-
+            if isinstance(clip_info, list):
+                clip_info = clip_info[0]
+            path = clip_info.get('filepath')
+            if path and os.path.exists(path):
+                return path
+        # Fuzzy fallback: partial filename match
         filename_lower = filename.lower()
-        fuzzy_matches = []
         for clip_name, info in self.clip_map.items():
             if filename_lower in clip_name.lower() or clip_name.lower() in filename_lower:
-                entries = info if isinstance(info, list) else [info]
-                for entry in entries:
-                    path = entry.get('filepath')
-                    if path and os.path.exists(path):
-                        fuzzy_matches.append(path)
-        if len(fuzzy_matches) == 1:
-            return fuzzy_matches[0]
+                if isinstance(info, list):
+                    info = info[0]
+                path = info.get('filepath')
+                if path and os.path.exists(path):
+                    return path
         return None
-
-    def _hydrate_result_metadata(self, result: Dict):
-        """Populate missing local-path metadata for a search result when possible."""
-        metadata = result.setdefault('metadata', {})
-        filename = metadata.get('file_filename', 'Unknown')
-        file_path = metadata.get('file_path') or ''
-        hashed_identifier = self._get_result_hashed_identifier(result)
-
-        processed_info = self._find_processed_info(
-            filename=filename,
-            file_path=file_path,
-            hashed_identifier=hashed_identifier,
-        )
-
-        if (not file_path or not os.path.exists(file_path)) and processed_info:
-            processed_path = processed_info.get('filepath')
-            if processed_path and os.path.exists(processed_path):
-                file_path = processed_path
-                metadata['file_path'] = file_path
-
-        if not file_path or not os.path.exists(file_path):
-            resolved_path = self._resolve_local_path(filename, hashed_identifier=hashed_identifier)
-            if resolved_path:
-                file_path = resolved_path
-                metadata['file_path'] = resolved_path
-                print(f"[Search] Resolved {filename} -> {resolved_path}")
-
-        if processed_info and processed_info.get('hashed_identifier') and not hashed_identifier:
-            metadata['hashed_identifier'] = processed_info['hashed_identifier']
-
-    def _find_matching_clip_entry(self, result: Dict) -> Optional[Dict]:
-        """Match a search result to an exact media-pool entry."""
-        self._hydrate_result_metadata(result)
-        metadata = result.get('metadata', {})
-        filename = metadata.get('file_filename', 'Unknown')
-        file_path = metadata.get('file_path')
-        normalized_file_path = self._normalize_media_path(file_path)
-
-        if normalized_file_path:
-            for entry in self._iter_clip_entries():
-                if self._normalize_media_path(entry.get('filepath')) == normalized_file_path:
-                    return entry
-
-        exact_match = self.clip_map.get(filename)
-        if isinstance(exact_match, dict):
-            return exact_match
-        if isinstance(exact_match, list) and len(exact_match) == 1:
-            return exact_match[0]
-
-        filename_lower = filename.lower()
-        fuzzy_matches = []
-        for clip_name, clip_info in self.clip_map.items():
-            clip_filename_lower = clip_name.lower()
-            if filename_lower in clip_filename_lower or clip_filename_lower in filename_lower:
-                entries = clip_info if isinstance(clip_info, list) else [clip_info]
-                fuzzy_matches.extend(entries)
-
-        if len(fuzzy_matches) == 1:
-            return fuzzy_matches[0]
-        return None
-
-    def _get_available_video_tracks(self) -> List[int]:
-        """Return the current timeline's available video tracks."""
-        if not resolve or not project:
-            return [1]
-        try:
-            timeline = project.GetCurrentTimeline()
-            if not timeline:
-                return [1]
-            track_count = max(1, int(timeline.GetTrackCount("video") or 0))
-            return list(range(1, track_count + 1))
-        except Exception:
-            return [1]
 
     def _load_thumbnail(self, label: QLabel, file_path: str, time_s: float, generation: int):
         """Load a thumbnail into a label (called via QTimer after cards are shown)."""
@@ -1927,7 +1732,6 @@ class ClipABitApp(QWidget):
             if generation != self._search_generation:
                 return  # Cleared while extracting
             if pixmap and label and label.parent():
-                label.clear()
                 label.setPixmap(pixmap)
                 label.setScaledContents(True)
 
@@ -1952,7 +1756,6 @@ class ClipABitApp(QWidget):
         layout.setSpacing(0)
         layout.setContentsMargins(0, 0, 0, 0)
 
-        self._hydrate_result_metadata(result)
         metadata = result.get('metadata', {})
         filename = metadata.get('file_filename', 'Unknown')
         file_path = metadata.get('file_path', '') or ''
@@ -1960,6 +1763,14 @@ class ClipABitApp(QWidget):
         end_time = float(metadata.get('end_time_s', 0))
         score = result.get('score', 0)
         display_name = f"{filename[:20]}..." if len(filename) > 20 else filename
+
+        # Resolve local path: use metadata file_path if it exists, otherwise match from media pool
+        if not file_path or not os.path.exists(file_path):
+            file_path = self._resolve_local_path(filename) or ''
+            if file_path:
+                # Inject resolved path into result so preview dialog can use it
+                result.setdefault('metadata', {})['file_path'] = file_path
+                print(f"[Search] Resolved {filename} -> {file_path}")
 
         # Thumbnail placeholder — show text immediately, load real thumbnail after
         thumbnail = QLabel()
@@ -2032,15 +1843,7 @@ class ClipABitApp(QWidget):
 
     def _open_video_preview(self, result: Dict):
         """Open the video preview/trimmer dialog for a search result."""
-        self._hydrate_result_metadata(result)
-        available_video_tracks = self._get_available_video_tracks()
-        selected_video_track = result.get('metadata', {}).get('target_video_track') or available_video_tracks[0]
-        dialog = VideoPreviewDialog(
-            result,
-            available_video_tracks=available_video_tracks,
-            selected_video_track=selected_video_track,
-            parent=self,
-        )
+        dialog = VideoPreviewDialog(result, parent=self)
         dialog.insert_requested.connect(self._add_result_to_timeline)
         dialog.exec()
 
@@ -2053,15 +1856,21 @@ class ClipABitApp(QWidget):
         # Refresh media pool to ensure we have latest clips
         self._refresh_media_pool(debug=True)
         print(f"[Timeline] clip_map entries: {len(self.clip_map)}")
+            
+        def _normalize_path(path_value: Optional[str]) -> Optional[str]:
+            if not path_value:
+                return None
+            try:
+                return os.path.normcase(os.path.normpath(path_value))
+            except Exception:
+                return path_value
 
         metadata = result.get('metadata', {})
         filename = metadata.get('file_filename', 'Unknown')
-        target_video_track = max(1, int(metadata.get('target_video_track') or 1))
-        matching_clip_info = self._find_matching_clip_entry(result)
         file_path = metadata.get('file_path')
+        normalized_file_path = _normalize_path(file_path)
         print(f"[Timeline] Target filename: {filename}")
         print(f"[Timeline] Target file_path: {file_path}")
-        print(f"[Timeline] Target video track: V{target_video_track}")
         start_time = metadata.get('start_time_s', 0)
         end_time = metadata.get('end_time_s', 0)
 
@@ -2074,21 +1883,57 @@ class ClipABitApp(QWidget):
             QMessageBox.warning(self, "Error", f"Invalid time range metadata for {filename}.")
             return
         
-        matching_clip = matching_clip_info.get('media_pool_item') if matching_clip_info else None
+        # Find the clip in media pool
+        matching_clip = None
+        matching_clip_info = None
+        if normalized_file_path:
+            for _, clip_info in self.clip_map.items():
+                if isinstance(clip_info, list):
+                    for entry in clip_info:
+                        if _normalize_path(entry.get('filepath')) == normalized_file_path:
+                            matching_clip_info = entry
+                            matching_clip = entry.get('media_pool_item')
+                            break
+                else:
+                    if _normalize_path(clip_info.get('filepath')) == normalized_file_path:
+                        matching_clip_info = clip_info
+                        matching_clip = clip_info.get('media_pool_item')
+                if matching_clip:
+                    break
+
+        if not matching_clip:
+            filename_lower = filename.lower()
+            for clip_filename, clip_info in self.clip_map.items():
+                clip_filename_lower = clip_filename.lower()
+                if filename_lower in clip_filename_lower or clip_filename_lower in filename_lower:
+                    if isinstance(clip_info, list):
+                        matching_clip_info = clip_info[0]
+                    else:
+                        matching_clip_info = clip_info
+                    matching_clip = matching_clip_info['media_pool_item']
+                    break
+                
         if not matching_clip:
             # Debug logging to diagnose mismatches
             print("[Timeline] Failed to match clip in media pool")
             print(f"[Timeline] Result filename: {filename}")
             print(f"[Timeline] Result file_path: {file_path}")
-            print(f"[Timeline] Result hashed_identifier: {self._get_result_hashed_identifier(result)}")
             sample_paths = []
             total_paths = 0
-            for entry in self._iter_clip_entries():
-                path = entry.get('filepath')
-                if path:
-                    total_paths += 1
-                    if len(sample_paths) < 5:
-                        sample_paths.append(path)
+            for _, clip_info in self.clip_map.items():
+                if isinstance(clip_info, list):
+                    for entry in clip_info:
+                        path = entry.get('filepath')
+                        if path:
+                            total_paths += 1
+                            if len(sample_paths) < 5:
+                                sample_paths.append(path)
+                else:
+                    path = clip_info.get('filepath')
+                    if path:
+                        total_paths += 1
+                        if len(sample_paths) < 5:
+                            sample_paths.append(path)
             print(f"[Timeline] Media pool file paths: {total_paths} total")
             for p in sample_paths:
                 print(f"[Timeline] Sample path: {p}")
@@ -2162,68 +2007,50 @@ class ClipABitApp(QWidget):
 
             print(f"[Timeline] Using fps={fps}, start_frame={start_frame}, end_frame={end_frame}, clip_frames={clip_frames}")
 
-            # Ensure the requested video track and at least one audio track exist.
+            # Ensure at least one video/audio track exists (AppendToTimeline can fail on empty timelines)
             try:
-                if timeline:
-                    current_video_tracks = int(timeline.GetTrackCount("video") or 0)
-                    while current_video_tracks < target_video_track:
-                        timeline.AddTrack("video")
-                        current_video_tracks += 1
-                        print(f"[Timeline] Added missing video track {current_video_tracks}.")
-
-                    if int(timeline.GetTrackCount("audio") or 0) == 0:
-                        timeline.AddTrack("audio")
-                        print("[Timeline] Added missing audio track 1.")
+                if timeline and int(timeline.GetTrackCount("video") or 0) == 0:
+                    timeline.AddTrack("video")
+                    print("[Timeline] Added missing video track 1.")
+                if timeline and int(timeline.GetTrackCount("audio") or 0) == 0:
+                    timeline.AddTrack("audio")
+                    print("[Timeline] Added missing audio track 1.")
             except Exception as e:
                 print(f"[Timeline] Failed to ensure video track: {e}")
 
-            # Best-effort track targeting for timelines with multiple video tracks.
+            # Best-effort track selection (blue source + red target) with diagnostics only.
             if timeline:
                 enable_fn = getattr(timeline, "SetTrackEnable", None)
                 autoselect_fn = getattr(timeline, "SetTrackAutoSelect", None)
                 lock_fn = getattr(timeline, "SetTrackLock", None)
-                video_track_count = int(timeline.GetTrackCount("video") or 0)
-                audio_track_count = int(timeline.GetTrackCount("audio") or 0)
                 print(
                     "[Timeline] Track methods:",
                     f"Enable={callable(enable_fn)}, AutoSelect={callable(autoselect_fn)}, Lock={callable(lock_fn)}"
                 )
-                for track_index in range(1, video_track_count + 1):
-                    for name, fn, enabled in (
-                        ("Enable", enable_fn, True),
-                        ("AutoSelect", autoselect_fn, track_index == target_video_track),
-                        ("Lock", lock_fn, False),
+                for track_type in ("video", "audio"):
+                    for name, fn, args in (
+                        ("Enable", enable_fn, (track_type, 1, True)),
+                        ("AutoSelect", autoselect_fn, (track_type, 1, True)),
+                        ("Lock", lock_fn, (track_type, 1, False)),
                     ):
                         if not callable(fn):
                             continue
                         try:
-                            result = fn("video", track_index, enabled)
-                            print(f"[Timeline] {name} video{track_index} -> {result}")
+                            result = fn(*args)
+                            print(f"[Timeline] {name} {track_type}1 -> {result}")
                         except Exception as e:
-                            print(f"[Timeline] {name} video{track_index} failed: {e}")
-
-                for track_index in range(1, max(audio_track_count, 1) + 1):
-                    for name, fn, enabled in (
-                        ("Enable", enable_fn, True),
-                        ("AutoSelect", autoselect_fn, track_index == 1),
-                        ("Lock", lock_fn, False),
-                    ):
-                        if not callable(fn):
-                            continue
-                        try:
-                            result = fn("audio", track_index, enabled)
-                            print(f"[Timeline] {name} audio{track_index} -> {result}")
-                        except Exception as e:
-                            print(f"[Timeline] {name} audio{track_index} failed: {e}")
+                            print(f"[Timeline] {name} {track_type}1 failed: {e}")
 
             before_count = _count_timeline_items(timeline) if timeline else None
             print(f"[Timeline] Items before append: {before_count}")
 
-            base_clip_info = {
+            clip_info = {
                 "mediaPoolItem": matching_clip,
                 "startFrame": start_frame,
                 "endFrame": end_frame,
             }
+            result = media_pool.AppendToTimeline([clip_info])
+            print(f"[Timeline] AppendToTimeline result: {result!r} (type={type(result).__name__})")
 
             def _is_append_success(value) -> bool:
                 if value is True:
@@ -2232,34 +2059,24 @@ class ClipABitApp(QWidget):
                     return any(item is not None for item in value)
                 return bool(value)
 
-            append_attempts = [
-                ("targeted append", [{**base_clip_info, "trackIndex": target_video_track}]),
-                ("patched append", [dict(base_clip_info)]),
-            ]
-            if target_video_track == 1:
-                append_attempts.append(("full clip fallback", [matching_clip]))
-
-            success = False
-            for attempt_name, payload in append_attempts:
-                result_value = media_pool.AppendToTimeline(payload)
-                print(f"[Timeline] {attempt_name} result: {result_value!r} (type={type(result_value).__name__})")
-                success = _is_append_success(result_value)
-                if success:
-                    break
+            success = _is_append_success(result)
+            if not success:
+                print("[Timeline] Timed append failed, trying full clip fallback.")
+                result_fallback = media_pool.AppendToTimeline([matching_clip])
+                print(f"[Timeline] Fallback AppendToTimeline result: {result_fallback!r} (type={type(result_fallback).__name__})")
+                success = _is_append_success(result_fallback)
 
             after_count = _count_timeline_items(timeline) if timeline else None
             print(f"[Timeline] Items after append: {after_count}")
 
             if success:
-                self.status_label.setText(
-                    f"Added {filename} ({start_time:.1f}s-{end_time:.1f}s) to V{target_video_track}"
-                )
+                self.status_label.setText(f"Added {filename} ({start_time:.1f}s-{end_time:.1f}s) to timeline")
             else:
                 print("[Timeline] AppendToTimeline returned False")
                 QMessageBox.warning(
                     self,
                     "Failed to Add Clip",
-                    f"Resolve could not insert the clip onto V{target_video_track}. If this is an empty timeline, "
+                    "Resolve could not insert the clip. If this is an empty timeline, "
                     "please enable Edit -> Edit Options -> Automatically Create Tracks on Edit, "
                     "or drag any clip into the timeline once to initialize track patching."
                 )
