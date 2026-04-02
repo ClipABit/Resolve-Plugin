@@ -153,6 +153,9 @@ class ClipABitApp(QWidget):
         self._search_generation = 0  # Incremented on clear to cancel pending thumbnail loads
         self.dialog_jobs_list = None
         self.dialog_file_status = None
+        self.upload_zone = None
+        self.empty_state_label = None
+        self.media_pool_badge = None
         
         # Upload queue system
         self.upload_queue = []  # List of files waiting to be uploaded
@@ -361,6 +364,7 @@ class ClipABitApp(QWidget):
         self.results_scroll.setWidget(self.results_container)
         layout.addWidget(self.results_scroll, 1)
 
+        self._update_idle_state_visibility()
         content.setLayout(layout)
         return content
     
@@ -401,6 +405,9 @@ class ClipABitApp(QWidget):
         self.btn_jobs_debug.setVisible(is_logged_in)
         self.btn_auth.setVisible(is_logged_in)
         self.logo_widget.setVisible(is_logged_in)
+        self._update_media_pool_badge()
+        QTimer.singleShot(0, self._update_media_pool_badge)
+        self._update_idle_state_visibility()
 
     
     def _create_header(self):
@@ -437,6 +444,11 @@ class ClipABitApp(QWidget):
         self.btn_media_pool = QPushButton("Media Pool")
         self.btn_media_pool.setObjectName("headerButtonSecondary")
         self.btn_media_pool.clicked.connect(self._show_upload_dialog)
+        self.media_pool_badge = QLabel("", self.btn_media_pool)
+        self.media_pool_badge.setObjectName("mediaPoolBadge")
+        self.media_pool_badge.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.media_pool_badge.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+        self.media_pool_badge.hide()
         layout.addWidget(self.btn_media_pool)
         
         # Small info icon button (top-right action)
@@ -734,15 +746,33 @@ class ClipABitApp(QWidget):
         zone_layout.addWidget(helper_text)
         self.upload_zone.setLayout(zone_layout)
         self.results_layout.addWidget(self.upload_zone, alignment=Qt.AlignmentFlag.AlignCenter)
+
+        self.empty_state_label = QLabel("no queries made yet.")
+        self.empty_state_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.empty_state_label.setObjectName("emptyState")
+        self.empty_state_label.setVisible(False)
+        self.results_layout.addWidget(self.empty_state_label)
+
         # Re-apply stylesheet so new widgets pick up styles
         self._apply_theme()
-    
+        self._update_idle_state_visibility()
+
+    def _update_idle_state_visibility(self):
+        """Show the upload empty-state only until the first project file is processed."""
+        has_query = bool(self.search_input.text().strip()) if hasattr(self, 'search_input') else False
+        has_processed = len(self._get_project_processed_files()) > 0
+        show_upload_zone = not has_query and not has_processed
+        show_empty_state = not has_query and has_processed
+
+        if self.upload_zone and self.upload_zone.parent():
+            self.upload_zone.setVisible(show_upload_zone)
+        if self.empty_state_label and self.empty_state_label.parent():
+            self.empty_state_label.setVisible(show_empty_state)
+
     def _on_search_text_changed(self, text):
         """Show/hide clear button and upload zone based on search input text."""
         self.btn_clear_search.setVisible(bool(text))
-        # Hide upload zone as soon as user starts typing
-        if hasattr(self, 'upload_zone') and self.upload_zone:
-            self.upload_zone.setVisible(not bool(text))
+        self._update_idle_state_visibility()
 
     def _build_namespace(self) -> str:
         """Build the namespace string from device id and project name."""
@@ -838,6 +868,15 @@ class ClipABitApp(QWidget):
             }}
             QPushButton#headerButtonSecondary:hover {{
                 background-color: #7B8794;
+            }}
+
+            QLabel#mediaPoolBadge {{
+                background-color: #FF3B30;
+                color: #FFFFFF;
+                border-radius: 9px;
+                font-size: 10px;
+                font-weight: 700;
+                padding: 0 4px;
             }}
 
             /* Compact info icon button */
@@ -1078,12 +1117,12 @@ class ClipABitApp(QWidget):
         info_title.setStyleSheet("font-size: 18px; font-weight: bold;")
         layout.addWidget(info_title)
         
-        # Storage path
-        storage_path = get_storage_path()
-        storage_label = QLabel(f"Storage: {storage_path}")
-        storage_label.setWordWrap(True)
-        storage_label.setStyleSheet("color: #8E8E93; font-size: 11px;")
-        layout.addWidget(storage_label)
+        if Config.ENVIRONMENT != "prod":
+            storage_path = get_storage_path()
+            storage_label = QLabel(f"Storage: {storage_path}")
+            storage_label.setWordWrap(True)
+            storage_label.setStyleSheet("color: #8E8E93; font-size: 11px;")
+            layout.addWidget(storage_label)
         
         # Processed files count
         processed_label = QLabel(f"Processed: {len(self._get_project_processed_files())} files")
@@ -1182,6 +1221,8 @@ class ClipABitApp(QWidget):
     def _update_file_status(self):
         """Update the file status display."""
         stats = self._get_upload_file_stats()
+        self._update_media_pool_badge(stats)
+        self._update_idle_state_visibility()
 
         # Update status text to include queue info
         status_parts = [
@@ -1263,6 +1304,29 @@ class ClipABitApp(QWidget):
             'available_entries': available_entries,
             'missing': missing_count,
         }
+
+    def _update_media_pool_badge(self, stats: Optional[dict] = None):
+        """Show a compact badge for newly available media-pool files."""
+        if not getattr(self, 'media_pool_badge', None) or not getattr(self, 'btn_media_pool', None):
+            return
+
+        if not (self.auth_manager and self.auth_manager.is_logged_in()):
+            self.media_pool_badge.hide()
+            return
+
+        if stats is None:
+            stats = self._get_upload_file_stats()
+
+        if stats['processed'] > 0 and stats['new'] > 0:
+            text = str(stats['new'])
+            width = max(18, self.media_pool_badge.fontMetrics().horizontalAdvance(text) + 10)
+            self.media_pool_badge.setText(text)
+            self.media_pool_badge.setFixedSize(width, 18)
+            self.media_pool_badge.move(max(0, self.btn_media_pool.width() - width - 4), 2)
+            self.media_pool_badge.raise_()
+            self.media_pool_badge.show()
+        else:
+            self.media_pool_badge.hide()
         
     def _select_files_to_upload(self):
         """Select media pool clips and add them to the upload queue."""
