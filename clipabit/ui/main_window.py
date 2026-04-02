@@ -1720,6 +1720,7 @@ class ClipABitApp(QWidget):
             if generation != self._search_generation:
                 return  # Cleared while extracting
             if pixmap and label and label.parent():
+                label.clear()
                 label.setPixmap(pixmap)
                 label.setScaledContents(True)
 

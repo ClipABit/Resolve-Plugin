@@ -536,6 +536,7 @@ class ThumbnailExtractor(QObject):
 
     def _on_frame(self, frame):
         from PyQt6.QtCore import QSize
+        from PyQt6.QtGui import QImage
         if not self._seeked or self._done:
             return
         if frame.isValid():
@@ -549,7 +550,7 @@ class ThumbnailExtractor(QObject):
                 )
                 x = (scaled.width() - w) // 2
                 y = (scaled.height() - h) // 2
-                cropped = scaled.copy(x, y, w, h)
+                cropped = scaled.copy(x, y, w, h).convertToFormat(QImage.Format.Format_RGB32)
                 pixmap = self._QPixmap.fromImage(cropped)
                 print(f"[Thumbnail] Captured frame at {self._player.position()}ms")
                 self._finish(pixmap)
