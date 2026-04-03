@@ -16,6 +16,8 @@ permissions:
 jobs:
   release:
     runs-on: ubuntu-latest
+    outputs:
+      new_release_published: ${{ steps.semantic.outputs.new_release_published }}
     steps:
       - name: checkout
         uses: actions/checkout@v5
@@ -29,6 +31,7 @@ jobs:
           python-version: "3.12"
 
       - name: semantic release
+        id: semantic
         uses: cycjimmy/semantic-release-action@v4
         with:
           extra_plugins: |
@@ -41,3 +44,10 @@ jobs:
             @semantic-release/github@10
         env:
           GITHUB_TOKEN: ${{ secrets.SEMANTIC_RELEASE_TOKEN || secrets.GITHUB_TOKEN }}
+
+  release-status:
+    needs: release
+    if: needs.release.outputs.new_release_published == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "Release ${{ needs.release.outputs.new_release_version }} published"
