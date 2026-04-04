@@ -38,15 +38,13 @@ def get_embedded_version() -> str | None:
 
 
 def load_installed_version(fallback_tag: str) -> str:
-    """Read the version. Prioritizes pyproject.toml, then version.json, then fallback."""
-    # 1. Try pyproject.toml (the source of truth for what's on disk)
-    embedded = get_embedded_version()
-    if embedded:
-        # Sync version.json if it's different or missing
-        save_installed_version(embedded)
-        return embedded
-
-    # 2. Try persisted version.json
+    """Read the version. Prioritizes version.json, then pyproject.toml, then fallback.
+    
+    This ensures the version persisted in ~/.clipabit (which survives plugin file 
+    replacements) is the authority, while still allowing fresh installs to 
+    be seeded from the package files.
+    """
+    # 1. Try persisted version.json (~/.clipabit/version.json)
     vf = _version_file_path()
     if vf.exists():
         try:
@@ -56,6 +54,13 @@ def load_installed_version(fallback_tag: str) -> str:
                 return tag
         except (json.JSONDecodeError, OSError):
             pass
+
+    # 2. Try pyproject.toml (the source of truth for what's on disk)
+    embedded = get_embedded_version()
+    if embedded:
+        # Seed version.json so it's the authority next time
+        save_installed_version(embedded)
+        return embedded
 
     # 3. Fallback to the provided constant (likely Config.RELEASE_TAG)
     save_installed_version(fallback_tag)
