@@ -143,7 +143,7 @@ class ClipABitApp(QWidget):
         super().__init__()
         
         # Log version on startup
-        installed_ver = load_installed_version(Config.RELEASE_TAG)
+        installed_ver = load_installed_version() or "Unknown"
         print(f"[ClipABit] Version: {installed_ver}")
         
         # Initialize data
@@ -374,7 +374,7 @@ class ClipABitApp(QWidget):
         
         # Check for updates when search screen is about to show
         if is_logged_in:
-            local_tag = load_installed_version(Config.RELEASE_TAG)
+            local_tag = load_installed_version()
             
             # Use staging track if local version is a pre-release 
             # OR if the environment is explicitly set to 'staging' or 'dev'.
@@ -560,7 +560,7 @@ class ClipABitApp(QWidget):
                 print("[Version] No tag_name in release response")
                 return
 
-            local_tag = load_installed_version(Config.RELEASE_TAG)
+            local_tag = load_installed_version()
             print(f"[Version] Local: {local_tag}  Remote: {remote_tag}")
 
             if not is_newer(remote_tag, local_tag):

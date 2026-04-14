@@ -11,21 +11,34 @@ import re
 import shutil
 import tempfile
 import zipfile
+import platform
+import subprocess
 from pathlib import Path
 
-
-def _version_file_path() -> Path:
-    """Return ~/.clipabit/version.json (always writable, survives updates)."""
-    p = Path(os.path.expanduser("~")) / ".clipabit"
-    p.mkdir(parents=True, exist_ok=True)
-    return p / "version.json"
+try:
+    import tomllib
+except ModuleNotFoundError:
+    try:
+        import tomli as tomllib
+    except ModuleNotFoundError:
+        # Check if we're in a Resolve environment where pip is bundled
+        try:
+            import pip._vendor.tomli as tomllib
+        except ImportError:
+            tomllib = None
 
 
 def get_embedded_version() -> str | None:
     """Read the version string directly from pyproject.toml if available."""
     try:
-        install_dir = get_plugin_install_dir()
-        pyproject_path = install_dir / "pyproject.toml"
+        # Prioritize pyproject.toml inside the clipabit/ package (new install standard)
+        package_dir = Path(__file__).resolve().parent.parent
+        pyproject_path = package_dir / "pyproject.toml"
+        
+        # Fallback to parent directory (dev environment)
+        if not pyproject_path.exists():
+            pyproject_path = package_dir.parent / "pyproject.toml"
+
         if pyproject_path.exists():
             content = pyproject_path.read_text(encoding="utf-8")
             # Simple regex to find version = "..."
@@ -37,45 +50,14 @@ def get_embedded_version() -> str | None:
     return None
 
 
-def load_installed_version(fallback_tag: str) -> str:
-    """Read the version. Prioritizes pyproject.toml, then version.json, then fallback."""
-    # 1. Try pyproject.toml (the source of truth for what's on disk)
-    embedded = get_embedded_version()
-    if embedded:
-        # Sync version.json if it's different or missing
-        save_installed_version(embedded)
-        return embedded
-
-    # 2. Try persisted version.json
-    vf = _version_file_path()
-    if vf.exists():
-        try:
-            data = json.loads(vf.read_text(encoding="utf-8"))
-            tag = data.get("installed_version")
-            if tag:
-                return tag
-        except (json.JSONDecodeError, OSError):
-            pass
-
-    # 3. Fallback to the provided constant (likely Config.RELEASE_TAG)
-    save_installed_version(fallback_tag)
-    return fallback_tag
+def load_installed_version() -> str | None:
+    """Read the version directly from pyproject.toml. No fallbacks."""
+    return get_embedded_version()
 
 
 def save_installed_version(tag: str) -> None:
-    """Persist the installed version tag to disk."""
-    vf = _version_file_path()
-    try:
-        # Only write if it's actually different to avoid unnecessary IO
-        if vf.exists():
-            data = json.loads(vf.read_text(encoding="utf-8"))
-            if data.get("installed_version") == tag:
-                return
-    except Exception:
-        pass
-
-    vf.write_text(json.dumps({"installed_version": tag}), encoding="utf-8")
-    print(f"[Version] Saved installed version: {tag}")
+    """No-op: persistent version.json is no longer used."""
+    pass
 
 
 def parse_semver(tag: str) -> tuple:
@@ -159,6 +141,80 @@ def get_plugin_install_dir() -> Path:
     return install_dir
 
 
+def get_clipabit_dir() -> Path:
+    """Return the ClipABit application directory (python runtime + deps).
+    Matches logic in installer-script.py.
+    """
+    system = platform.system()
+    if system == "Darwin":
+        return Path.home() / "Library/Application Support/ClipABit"
+    elif system == "Windows":
+        localappdata = os.getenv("LOCALAPPDATA")
+        if not localappdata:
+            localappdata = str(Path.home() / "AppData" / "Local")
+        return Path(localappdata) / "ClipABit"
+    return Path.home() / ".local" / "share" / "clipabit"
+
+
+def get_python_exe() -> str:
+    """Return the path to the bundled or system Python executable."""
+    clipabit_dir = get_clipabit_dir()
+    system = platform.system()
+    if system == "Windows":
+        bundled = clipabit_dir / "python" / "python.exe"
+    else:
+        bundled = clipabit_dir / "python" / "bin" / "python3"
+
+    if bundled.exists():
+        return str(bundled)
+    
+    # Fallback to current sys.executable (often what Resolve is using)
+    return sys.executable
+
+
+def update_dependencies(pyproject_path: Path) -> None:
+    """Read dependencies from pyproject.toml and install them to the deps directory."""
+    if not tomllib:
+        print("[Update] Skipping dependency update: tomllib/tomli not found.")
+        return
+
+    try:
+        with open(pyproject_path, "rb") as f:
+            data = tomllib.load(f)
+        deps = data.get("project", {}).get("dependencies", [])
+        if not deps:
+            print("[Update] No dependencies found in pyproject.toml")
+            return
+
+        clipabit_dir = get_clipabit_dir()
+        deps_dir = clipabit_dir / "deps"
+        python_exe = get_python_exe()
+
+        print(f"[Update] Updating {len(deps)} dependencies in {deps_dir}")
+        
+        # Clear old deps to ensure a clean state (matching installer behavior)
+        if deps_dir.exists():
+            shutil.rmtree(deps_dir)
+        deps_dir.mkdir(parents=True, exist_ok=True)
+
+        for dep in deps:
+            print(f"[Update] Installing {dep}...")
+            subprocess.run(
+                [python_exe, "-m", "pip", "install", 
+                 "--target", str(deps_dir), 
+                 "--only-binary=:all:",
+                 "--no-user",
+                 "--no-cache-dir",
+                 dep],
+                check=True, capture_output=True
+            )
+        print("[Update] Dependencies updated successfully")
+    except Exception as e:
+        print(f"[Update] Failed to update dependencies: {e}")
+        # We don't raise here to allow the code update to persist even if pip fails
+        # (user might be offline, etc.)
+
+
 def apply_update(zip_path: str, install_dir: Path) -> None:
     """Extract clipabit/, clipabit.py, and pyproject.toml from the GitHub zipball into install_dir.
 
@@ -204,6 +260,9 @@ def apply_update(zip_path: str, install_dir: Path) -> None:
             dest_toml = install_dir / "pyproject.toml"
             print(f"[Update] Copying new pyproject.toml to {dest_toml}")
             shutil.copy2(src_toml, dest_toml)
+            
+            # --- Update Dependencies ---
+            update_dependencies(dest_toml)
 
         # Copy .env if present (contains config like Auth0 keys)
         src_env = repo_root / ".env"
