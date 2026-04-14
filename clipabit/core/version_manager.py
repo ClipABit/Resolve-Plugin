@@ -5,7 +5,7 @@ plugin file replacements. On startup, compares against the latest GitHub
 release and can download + apply updates from the repo zipball.
 """
 
-import json
+import sys
 import os
 import re
 import shutil
