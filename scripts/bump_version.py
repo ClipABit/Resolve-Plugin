@@ -58,8 +58,33 @@ def main() -> int:
         return 1
 
     updated = "".join(updated_lines)
-
     pyproject_path.write_text(updated, encoding="utf-8")
+    print(f"Updated {pyproject_path} version to {version}")
+
+    # --- Sync RELEASE_TAG in clipabit/api/config.py ---
+    config_path = Path("clipabit/api/config.py")
+    if config_path.exists():
+        content = config_path.read_text(encoding="utf-8")
+        # Ensure tag has 'v' prefix if that's your convention, or keep as is
+        tag_value = version
+        if not tag_value.startswith("v") and "." in tag_value:
+             # If it's a standard version string, ensure it matches the tag format
+             # (GitHub tags usually have 'v', but we can be flexible)
+             pass 
+
+        # Replace RELEASE_TAG = "..."
+        new_content = re.sub(
+            r'(RELEASE_TAG\s*=\s*")[^"]*(")',
+            rf'\g<1>{tag_value}\g<2>',
+            content
+        )
+        
+        if new_content != content:
+            config_path.write_text(new_content, encoding="utf-8")
+            print(f"Updated {config_path} RELEASE_TAG to {tag_value}")
+        else:
+            print(f"Warning: Could not find RELEASE_TAG in {config_path}")
+
     return 0
 
 

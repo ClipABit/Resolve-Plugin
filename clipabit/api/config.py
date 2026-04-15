@@ -1,8 +1,9 @@
 import os
 
+
 class Config:
     """Configuration for ClipABit plugin."""
-    
+
     # Environment (can be overridden via environment variable)
     ENVIRONMENT = os.environ.get("CLIPABIT_ENVIRONMENT", "dev")
 
@@ -10,7 +11,8 @@ class Config:
     # URL format: https://clipabit01--{app-name}-{classname-lowercase}-asgi-app.modal.run
     # Base URLs
     # set CLIPABIT_DEV_REMOTE=true to use modal dev URLs
-    DEV_REMOTE = os.environ.get("CLIPABIT_DEV_REMOTE", "").lower() in {"1", "true"}
+    DEV_REMOTE = os.environ.get(
+        "CLIPABIT_DEV_REMOTE", "").lower() in {"1", "true"}
 
     if ENVIRONMENT == "dev" and not DEV_REMOTE:
         SERVER_BASE_URL = "http://127.0.0.1:8000"
@@ -27,7 +29,7 @@ class Config:
         # staging-search app: SearchService class -> searchservice-asgi-app
         SERVER_BASE_URL = f"https://clipabit01--{ENVIRONMENT}-server-server-asgi-app.modal.run"
         SEARCH_BASE_URL = f"https://clipabit01--{ENVIRONMENT}-search-searchservice-asgi-app.modal.run"
-    
+
     # Allow env var overrides for custom dev servers
     SERVER_BASE_URL = os.environ.get("CLIPABIT_SERVER_URL", SERVER_BASE_URL)
     SEARCH_BASE_URL = os.environ.get("CLIPABIT_SEARCH_URL", SEARCH_BASE_URL)
@@ -45,4 +47,3 @@ class Config:
     # Repo information (for auto-update)
     OWNER = "ClipABit"
     REPO = "Resolve-Plugin"
-    RELEASE_TAG = "1.3.0rc2"

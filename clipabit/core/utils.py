@@ -4,6 +4,7 @@ import hashlib
 import platform
 from pathlib import Path
 from typing import Dict
+from ..api.config import Config
 
 
 def get_storage_path() -> Path:
@@ -17,10 +18,13 @@ def get_storage_path() -> Path:
     else:
         xdg = os.getenv("XDG_CONFIG_HOME")
         base = xdg if xdg else str(Path.home() / ".config")
-        storage_dir = Path(base) / "clipabit"
+        storage_dir = Path(base) / ".clipabit"
 
     storage_dir.mkdir(parents=True, exist_ok=True)
-    return storage_dir / "processed_files.json"
+    
+    # Namespace by environment (prod, staging, dev) to prevent cache pollution
+    filename = f"processed_files_{Config.ENVIRONMENT}.json"
+    return storage_dir / filename
 
 def load_processed_files(storage_path: Path = None) -> Dict[str, Dict]:
     """Load list of processed files from local storage."""
