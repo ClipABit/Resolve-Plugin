@@ -180,7 +180,7 @@ class NetworkClient(QObject):
                         # Sort by semver descending
                         sorted_releases = sorted(
                             staging_releases,
-                            key=lambda x: parse_semver(x.get("tag_name", "v0.0.0")),
+                            key=lambda x: parse_semver(x.get("tag_name")),
                             reverse=True
                         )
                         best = sorted_releases[0]
