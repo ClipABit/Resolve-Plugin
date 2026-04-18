@@ -1129,6 +1129,11 @@ class ClipABitApp(QWidget):
         processed_label.setStyleSheet("color: #8E8E93; font-size: 11px;")
         layout.addWidget(processed_label)
         
+        # Version info
+        version_label = QLabel(f"Version: {load_installed_version() or 'Unknown'}")
+        version_label.setStyleSheet("color: #8E8E93; font-size: 11px;")
+        layout.addWidget(version_label)
+        
         # Queue info
         queue_label = QLabel(f"Upload Queue: {len(self.upload_queue)} files")
         queue_label.setStyleSheet("color: #8E8E93; font-size: 11px;")
