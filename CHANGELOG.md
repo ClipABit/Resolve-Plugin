@@ -1,3 +1,4 @@
+## [1.4.1-staging.2](https://github.com/ClipABit/Resolve-Plugin/compare/v1.4.1-staging.1...v1.4.1-staging.2) (2026-04-18)
 ## [1.4.2](https://github.com/ClipABit/Resolve-Plugin/compare/v1.4.1...v1.4.2) (2026-04-15)
 
 ### Bug Fixes
