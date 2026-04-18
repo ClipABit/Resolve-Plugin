@@ -39,7 +39,7 @@ class Config:
     UPLOAD_API_URL = f"{SERVER_BASE_URL}/upload"
     STATUS_API_URL = f"{SERVER_BASE_URL}/status"
     # Timeouts and delays
-    UPLOAD_TIMEOUT = 300
+    UPLOAD_TIMEOUT = 3600
     STATUS_CHECK_TIMEOUT = 10
     STATUS_CHECK_INTERVAL = 2
     QUEUE_DELAY = 1000  # milliseconds
