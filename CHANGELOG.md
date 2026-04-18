@@ -1,8 +1,10 @@
 ## [1.4.1-staging.2](https://github.com/ClipABit/Resolve-Plugin/compare/v1.4.1-staging.1...v1.4.1-staging.2) (2026-04-18)
+## [1.4.2](https://github.com/ClipABit/Resolve-Plugin/compare/v1.4.1...v1.4.2) (2026-04-15)
 
 ### Bug Fixes
 
 * version mismatch from multiple sources ([#71](https://github.com/ClipABit/Resolve-Plugin/issues/71)) ([35d2bdc](https://github.com/ClipABit/Resolve-Plugin/commit/35d2bdcd40707c33ccd5e10d351dda73c4c74b94)), closes [#67](https://github.com/ClipABit/Resolve-Plugin/issues/67) [#65](https://github.com/ClipABit/Resolve-Plugin/issues/65)
+* versioning issues ([#72](https://github.com/ClipABit/Resolve-Plugin/issues/72)) ([2f0d5e5](https://github.com/ClipABit/Resolve-Plugin/commit/2f0d5e534a699de5ba4b14b888bcc8bd288c5e9b)), closes [#71](https://github.com/ClipABit/Resolve-Plugin/issues/71) [#67](https://github.com/ClipABit/Resolve-Plugin/issues/67) [#65](https://github.com/ClipABit/Resolve-Plugin/issues/65)
 
 ## [1.4.1](https://github.com/ClipABit/Resolve-Plugin/compare/v1.4.0...v1.4.1) (2026-04-03)
 
