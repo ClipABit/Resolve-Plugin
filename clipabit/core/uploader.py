@@ -55,7 +55,7 @@ class FileUploader(QObject):
     def _upload(self, retry_count: int):
         file_size = os.path.getsize(self.filepath)
         file_size_mb = file_size / (1024 * 1024)
-        timeout = min(600, max(60, int(file_size_mb * 60)))
+        timeout = min(Config.UPLOAD_TIMEOUT, max(60, int(file_size_mb * 60)))
 
         label = f"Uploading {self.filename}..."
         if retry_count > 0:
