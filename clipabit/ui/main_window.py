@@ -237,27 +237,12 @@ class ClipABitApp(QWidget):
 
         self.setLayout(main_layout)
 
-        # Floating help bubble
-        self.btn_help = QPushButton("?", self)
-        self.btn_help.setObjectName("helpBubble")
-        self.btn_help.setFixedSize(32, 32)
-        self.btn_help.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.btn_help.setToolTip("Feedback & Support")
-        self.btn_help.clicked.connect(self._on_help_clicked)
-        self.btn_help.raise_()
-        
         # Show appropriate content based on login state
         self._update_ui_for_auth_state()
 
     def resizeEvent(self, event):
-        """Keep the help bubble at the bottom right."""
+        """Standard resize behavior."""
         super().resizeEvent(event)
-        if hasattr(self, 'btn_help'):
-            # Position 20px from right, 20px from bottom (above status bar)
-            margin = 20
-            button_x = self.width() - self.btn_help.width() - margin
-            button_y = self.height() - self.btn_help.height() - margin - 30
-            self.btn_help.move(button_x, button_y)
 
     def _on_help_clicked(self):
         """Open the Typeform feedback URL in the system browser."""
@@ -425,10 +410,12 @@ class ClipABitApp(QWidget):
         self.logo_widget.setVisible(True)
         
         # Hide internal features when not logged in
+        self.btn_feedback.setVisible(is_logged_in)
         self.btn_media_pool.setVisible(is_logged_in)
-        self.btn_jobs_debug.setVisible(is_logged_in)
         self.btn_auth.setVisible(is_logged_in)
+        self.btn_jobs_debug.setVisible(is_logged_in)
         self.logo_widget.setVisible(is_logged_in)
+        
         self._update_media_pool_badge()
         QTimer.singleShot(0, self._update_media_pool_badge)
         self._update_idle_state_visibility()
@@ -458,11 +445,11 @@ class ClipABitApp(QWidget):
         # Spacer to push buttons to the right
         layout.addStretch()
         
-        # Sign In / Sign Out button (only visible when logged in)
-        self.btn_auth = QPushButton()
-        self.btn_auth.setObjectName("headerButton")
-        self.btn_auth.clicked.connect(self._on_auth_button_clicked)
-        layout.addWidget(self.btn_auth)
+        # Feedback button
+        self.btn_feedback = QPushButton("Feedback")
+        self.btn_feedback.setObjectName("headerButtonSecondary")
+        self.btn_feedback.clicked.connect(self._on_help_clicked)
+        layout.addWidget(self.btn_feedback)
         
         # Media Pool button
         self.btn_media_pool = QPushButton("Media Pool")
@@ -474,6 +461,12 @@ class ClipABitApp(QWidget):
         self.media_pool_badge.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
         self.media_pool_badge.hide()
         layout.addWidget(self.btn_media_pool)
+        
+        # Sign In / Sign Out button
+        self.btn_auth = QPushButton()
+        self.btn_auth.setObjectName("headerButton")
+        self.btn_auth.clicked.connect(self._on_auth_button_clicked)
+        layout.addWidget(self.btn_auth)
         
         # Small info icon button (top-right action)
         self.btn_jobs_debug = QPushButton("i")
