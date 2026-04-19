@@ -1,5 +1,6 @@
 import os
 from typing import Dict
+from collections import deque
 
 from PyQt6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
@@ -518,16 +519,31 @@ class VideoPreviewDialog(QDialog):
 
 
 class ThumbnailExtractor(QObject):
-    """Non-blocking thumbnail extractor — emits `ready` with a QPixmap or None."""
+    """Non-blocking thumbnail extractor.
+    
+    Supports sequential extraction of multiple timestamps from a single file
+    to optimize decoder usage.
+    """
 
-    ready = pyqtSignal(object)  # QPixmap or None
+    # Emits (time_s, pixmap_or_None) for each target
+    frame_ready = pyqtSignal(float, object)
+    # Emits when all targets are finished
+    finished = pyqtSignal()
 
-    def __init__(self, file_path: str, time_s: float, size=(280, 140), parent=None):
+    def __init__(self, file_path: str, targets: list, parent=None):
+        """
+        Args:
+            file_path: Path to video file
+            targets: List of (time_s, size) tuples
+        """
         super().__init__(parent)
         from PyQt6.QtGui import QPixmap
         from PyQt6.QtMultimedia import QMediaPlayer, QVideoSink
 
-        self._size = size
+        self._file_path = file_path
+        self._targets = deque(targets)
+        self._current_target = None
+        
         self._seeked = False
         self._done = False
         self._QPixmap = QPixmap
@@ -540,36 +556,58 @@ class ThumbnailExtractor(QObject):
         self._player.mediaStatusChanged.connect(self._on_media_status)
         self._player.errorOccurred.connect(self._on_error)
 
-        self._target_ms = int(time_s * 1000)
-
         self._timeout = QTimer(self)
         self._timeout.setSingleShot(True)
-        self._timeout.timeout.connect(lambda: self._finish(None))
-        self._timeout.start(5000)
+        self._timeout.timeout.connect(self._on_timeout)
 
-        print(f"[Thumbnail] Extracting from {os.path.basename(file_path)} at {time_s:.2f}s")
+        print(f"[Thumbnail] Starting extraction from {os.path.basename(file_path)} ({len(targets)} targets)")
         self._player.setSource(QUrl.fromLocalFile(file_path))
+
+    def _process_next_target(self):
+        if not self._targets:
+            self._finish_all()
+            return
+
+        self._current_target = self._targets.popleft()
+        time_s, size = self._current_target
+        
+        target_ms = int(time_s * 1000)
+        self._seeked = False
+        
+        print(f"[Thumbnail] Seeking to {time_s:.2f}s")
+        self._player.setPosition(target_ms)
+        self._seeked = True
+        
+        # Start/Reset timeout for this specific seek
+        self._timeout.stop()
+        self._timeout.start(5000)
+        
+        # Briefly play to trigger frame decoding
+        self._player.play()
 
     def _on_media_status(self, status):
         from PyQt6.QtMultimedia import QMediaPlayer
         if self._done:
             return
-        if status in (QMediaPlayer.MediaStatus.BufferedMedia,
-                      QMediaPlayer.MediaStatus.LoadedMedia):
-            print(f"[Thumbnail] Seeking to {self._target_ms}ms")
-            self._player.setPosition(self._target_ms)
-            self._seeked = True
-            self._player.play()
+        
+        # Start first target once media is ready
+        if not self._current_target and status in (QMediaPlayer.MediaStatus.BufferedMedia,
+                                                 QMediaPlayer.MediaStatus.LoadedMedia):
+            self._process_next_target()
 
     def _on_frame(self, frame):
         from PyQt6.QtCore import QSize
         from PyQt6.QtGui import QImage
-        if not self._seeked or self._done:
+        
+        if not self._seeked or self._done or not self._current_target:
             return
+            
         if frame.isValid():
+            time_s, size = self._current_target
             image = frame.toImage()
+            
             if not image.isNull():
-                w, h = self._size
+                w, h = size
                 scaled = image.scaled(
                     QSize(w, h),
                     Qt.AspectRatioMode.KeepAspectRatioByExpanding,
@@ -579,20 +617,39 @@ class ThumbnailExtractor(QObject):
                 y = (scaled.height() - h) // 2
                 cropped = scaled.copy(x, y, w, h).convertToFormat(QImage.Format.Format_RGB32)
                 pixmap = self._QPixmap.fromImage(cropped)
+                
                 print(f"[Thumbnail] Captured frame at {self._player.position()}ms")
-                self._finish(pixmap)
+                self.frame_ready.emit(time_s, pixmap)
+                
+                # Move to next target immediately
+                self._current_target = None
+                self._process_next_target()
+
+    def _on_timeout(self):
+        if self._current_target:
+            time_s, size = self._current_target
+            print(f"[Thumbnail] Timeout waiting for frame at {time_s:.2f}s")
+            self.frame_ready.emit(time_s, None)
+            
+            # Move to next even if this one failed
+            self._current_target = None
+            self._process_next_target()
 
     def _on_error(self, error, msg=""):
         print(f"[Thumbnail] Error: {error} - {msg}")
-        self._finish(None)
+        if self._current_target:
+            self.frame_ready.emit(self._current_target[0], None)
+        self._finish_all()
 
-    def _finish(self, pixmap):
+    def _finish_all(self):
         if self._done:
             return
         self._done = True
         self._timeout.stop()
-        print(f"[Thumbnail] Result: {'OK' if pixmap else 'FAILED'}")
-        self.ready.emit(pixmap)
+        
+        print(f"[Thumbnail] Finished all targets for {os.path.basename(self._file_path)}")
+        self.finished.emit()
+        
         try:
             self._player.stop()
             self._player.setSource(QUrl())
@@ -603,12 +660,11 @@ class ThumbnailExtractor(QObject):
 
 
 def extract_thumbnail(file_path: str, time_s: float, size=(280, 140), on_ready=None, parent=None):
-    """Extract a thumbnail from a video file at the given timestamp.
-
-    If on_ready is provided, extraction is non-blocking: on_ready(QPixmap_or_None)
-    is called when done, and the ThumbnailExtractor is returned.
-
-    If on_ready is None, falls back to blocking extraction (legacy)."""
+    """Entry point for thumbnail extraction.
+    
+    If on_ready is provided, it's non-blocking.
+    Note: For production use, use ThumbnailManager.request() instead to benefit from queueing.
+    """
     if not file_path or not os.path.exists(file_path):
         if on_ready:
             on_ready(None)
@@ -616,20 +672,107 @@ def extract_thumbnail(file_path: str, time_s: float, size=(280, 140), on_ready=N
         return None
 
     if on_ready is not None:
-        extractor = ThumbnailExtractor(file_path, time_s, size, parent=parent)
-        extractor.ready.connect(on_ready)
+        # Compatibility wrapper for single-target extractor
+        extractor = ThumbnailExtractor(file_path, [(time_s, size)], parent=parent)
+        extractor.frame_ready.connect(lambda t, p: on_ready(p))
         return extractor
 
-    # Blocking fallback (used outside of event loop contexts)
+    # Blocking fallback
     from PyQt6.QtCore import QEventLoop
     result = [None]
     loop = QEventLoop()
 
-    def _on_ready(pixmap):
+    def _on_ready(t, pixmap):
         result[0] = pixmap
         loop.quit()
 
-    extractor = ThumbnailExtractor(file_path, time_s, size, parent=None)
-    extractor.ready.connect(_on_ready)
+    extractor = ThumbnailExtractor(file_path, [(time_s, size)], parent=None)
+    extractor.frame_ready.connect(_on_ready)
     loop.exec()
     return result[0]
+
+
+class ThumbnailManager(QObject):
+    """Global manager that batches thumbnail requests by file path.
+    
+    Processes requests sequentially: opens a file, extracts all requested 
+    timestamps for that file, then moves to the next file.
+    """
+    
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._queue = deque()  # List of (file_path, time_s, size, callback)
+        self._is_processing = False
+
+    def request(self, file_path: str, time_s: float, size=(280, 140), on_ready=None):
+        """Add a request to the queue and start processing if idle."""
+        if not file_path or not os.path.exists(file_path):
+            if on_ready:
+                on_ready(None)
+            return
+
+        self._queue.append((file_path, time_s, size, on_ready))
+        
+        if not self._is_processing:
+            # Short debounce to allow multiple results from the same UI update to arrive
+            QTimer.singleShot(50, self._process_next)
+
+    def cancel_all(self):
+        """Clear the queue (e.g. when a new search starts)."""
+        if self._queue:
+            print(f"[ThumbnailManager] Cancelling {len(self._queue)} pending requests")
+            self._queue.clear()
+
+    def _process_next(self):
+        if not self._queue:
+            self._is_processing = False
+            return
+
+        self._is_processing = True
+        
+        # 1. Pick the first item in the queue
+        first_item = self._queue.popleft()
+        file_path = first_item[0]
+        
+        # 2. Gather all other items for the same file currently in the queue
+        batch_items = [first_item]
+        remaining_items = deque()
+        
+        while self._queue:
+            item = self._queue.popleft()
+            if item[0] == file_path:
+                batch_items.append(item)
+            else:
+                remaining_items.append(item)
+        
+        # Restore items for other files to the queue
+        self._queue = remaining_items
+
+        # 3. Build targets and callback map
+        # Map timestamp -> list of callbacks (in case of duplicate requests)
+        callback_map = {}
+        targets = []
+        for _, time_s, size, cb in batch_items:
+            if time_s not in callback_map:
+                callback_map[time_s] = []
+                targets.append((time_s, size))
+            callback_map[time_s].append(cb)
+
+        # 4. Create and start the extractor
+        extractor = ThumbnailExtractor(file_path, targets, parent=self)
+        
+        def _on_frame(time_s, pixmap):
+            callbacks = callback_map.get(time_s, [])
+            for cb in callbacks:
+                if cb:
+                    try:
+                        cb(pixmap)
+                    except Exception as e:
+                        print(f"[ThumbnailManager] Callback error: {e}")
+
+        def _on_finished():
+            # Small delay before next batch to let the OS breathe
+            QTimer.singleShot(50, self._process_next)
+
+        extractor.frame_ready.connect(_on_frame)
+        extractor.finished.connect(_on_finished)

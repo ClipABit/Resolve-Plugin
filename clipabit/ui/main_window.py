@@ -236,9 +236,33 @@ class ClipABitApp(QWidget):
         main_layout.addWidget(self.status_label)
 
         self.setLayout(main_layout)
+
+        # Floating help bubble
+        self.btn_help = QPushButton("?", self)
+        self.btn_help.setObjectName("helpBubble")
+        self.btn_help.setFixedSize(32, 32)
+        self.btn_help.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_help.setToolTip("Feedback & Support")
+        self.btn_help.clicked.connect(self._on_help_clicked)
+        self.btn_help.raise_()
         
         # Show appropriate content based on login state
         self._update_ui_for_auth_state()
+
+    def resizeEvent(self, event):
+        """Keep the help bubble at the bottom right."""
+        super().resizeEvent(event)
+        if hasattr(self, 'btn_help'):
+            # Position 20px from right, 20px from bottom (above status bar)
+            margin = 20
+            button_x = self.width() - self.btn_help.width() - margin
+            button_y = self.height() - self.btn_help.height() - margin - 30
+            self.btn_help.move(button_x, button_y)
+
+    def _on_help_clicked(self):
+        """Open the Typeform feedback URL in the system browser."""
+        print(f"[Help] Opening feedback URL: {Config.FEEDBACK_URL}")
+        webbrowser.open(Config.FEEDBACK_URL)
     
     def _create_get_started_content(self):
         """Create the 'Get Started' screen shown when not logged in."""
@@ -699,6 +723,7 @@ class ClipABitApp(QWidget):
         """Clear the search input and results, returning to initial state with upload zone."""
         print("[Search] Clear button clicked")
         self._search_generation += 1  # Invalidate pending thumbnail loads
+        self.thumbnail_manager.cancel_all()
         self.search_input.clear()
         # Remove and destroy everything from results layout
         for i in reversed(range(self.results_layout.count())):
@@ -1082,8 +1107,8 @@ class ClipABitApp(QWidget):
                 background-color: #4A4B52;
                 color: #FFFFFF;
                 border: none;
-                border-radius: 10px;
-                font-size: 12px;
+                border-radius: 16px;
+                font-size: 16px;
                 font-weight: bold;
             }}
             QPushButton#helpBubble:hover {{
@@ -2745,6 +2770,10 @@ def main(resolve_api=None):
     _instance = ClipABitApp()
     _instance.show()
     _instance.raise_()
+    _instance.activateWindow()
+
+    print("ClipABit Plugin started.")
+    app_qt.exec()
     _instance.activateWindow()
 
     print("ClipABit Plugin started.")

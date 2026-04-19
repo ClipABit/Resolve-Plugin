@@ -47,3 +47,6 @@ class Config:
     # Repo information (for auto-update)
     OWNER = "ClipABit"
     REPO = "Resolve-Plugin"
+
+    # Feedback URL
+    FEEDBACK_URL = "https://form.typeform.com/to/m4gp8mnr"
