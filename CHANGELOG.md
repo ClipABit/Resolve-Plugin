@@ -1,3 +1,10 @@
+## [1.5.0](https://github.com/ClipABit/Resolve-Plugin/compare/v1.4.4...v1.5.0) (2026-04-19)
+
+### Bug Fixes
+
+* typeform, thumbnails and buttons ([#77](https://github.com/ClipABit/Resolve-Plugin/issues/77)) ([f0fe5ef](https://github.com/ClipABit/Resolve-Plugin/commit/f0fe5ef1f98bf5ec404e5895aac3eed3c3e4a0b8))
+* typeform, thumbnails and buttons ([#77](https://github.com/ClipABit/Resolve-Plugin/issues/77)) ([#78](https://github.com/ClipABit/Resolve-Plugin/issues/78)) ([d3bcc66](https://github.com/ClipABit/Resolve-Plugin/commit/d3bcc6697d4bb3df574f4b652f60018b64658ccd))
+
 ## [1.4.4](https://github.com/ClipABit/Resolve-Plugin/compare/v1.4.3...v1.4.4) (2026-04-18)
 
 ## [1.4.3](https://github.com/ClipABit/Resolve-Plugin/compare/v1.4.2...v1.4.3) (2026-04-18)
