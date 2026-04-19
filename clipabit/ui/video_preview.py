@@ -547,6 +547,8 @@ class ThumbnailExtractor(QObject):
         self._seeked = False
         self._done = False
         self._QPixmap = QPixmap
+        self._frames_to_skip = 8
+        self._skipped_count = 0
 
         self._player = QMediaPlayer(self)
         self._sink = QVideoSink(self)
@@ -573,6 +575,7 @@ class ThumbnailExtractor(QObject):
         
         target_ms = int(time_s * 1000)
         self._seeked = False
+        self._skipped_count = 0
         
         print(f"[Thumbnail] Seeking to {time_s:.2f}s")
         self._player.setPosition(target_ms)
@@ -601,12 +604,32 @@ class ThumbnailExtractor(QObject):
         
         if not self._seeked or self._done or not self._current_target:
             return
+
+        # 1. Filter out old frames from the "seek flight"
+        # (macOS decoder often returns several stale frames while seeking)
+        time_s, size = self._current_target
+        target_us = int(time_s * 1000000)
+        frame_us = frame.startTime() # in microseconds
+        
+        if frame_us >= 0 and frame_us < target_us - 100000: # 100ms tolerance
+            # Still getting old frames, skip it
+            return
+
+        # 2. Skip a few initial "valid" frames to let the decoder settle (sync)
+        # This prevents capture of half-decoded macroblocks which cause green spots.
+        if self._skipped_count < self._frames_to_skip:
+            self._skipped_count += 1
+            return
             
         if frame.isValid():
-            time_s, size = self._current_target
+            # toImage() internally maps/converts standard YUV/NV12 to RGB
             image = frame.toImage()
             
             if not image.isNull():
+                # Force standard 32-bit RGB deep copy immediately
+                # (Qt's shared memory management might reuse the buffer if we don't copy)
+                image = image.convertToFormat(QImage.Format.Format_RGB32)
+                
                 w, h = size
                 scaled = image.scaled(
                     QSize(w, h),
@@ -615,7 +638,7 @@ class ThumbnailExtractor(QObject):
                 )
                 x = (scaled.width() - w) // 2
                 y = (scaled.height() - h) // 2
-                cropped = scaled.copy(x, y, w, h).convertToFormat(QImage.Format.Format_RGB32)
+                cropped = scaled.copy(x, y, w, h)
                 pixmap = self._QPixmap.fromImage(cropped)
                 
                 print(f"[Thumbnail] Captured frame at {self._player.position()}ms")

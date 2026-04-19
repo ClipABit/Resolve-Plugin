@@ -989,6 +989,9 @@ class ClipABitApp(QWidget):
                 border-radius: 0;
                 border: 1px solid {t['border']};
             }}
+            QFrame#resultCard:hover {{
+                border-color: {t['accent']};
+            }}
             
             /* Thumbnail placeholder (rectangular) */
             QLabel#thumbnail {{
@@ -1012,7 +1015,7 @@ class ClipABitApp(QWidget):
             /* Add to timeline button (rectangular) */
             QPushButton#addToTimelineBtn {{
                 background-color: {t['accent']};
-                color: #000000;
+                color: {t['button_text']};
                 border: none;
                 border-radius: 0;
                 padding: 8px 16px;
@@ -1977,6 +1980,9 @@ class ClipABitApp(QWidget):
         card.setObjectName("resultCard")
         card.setFixedSize(280, 240)
         card.setCursor(Qt.CursorShape.PointingHandCursor)
+        
+        # Handle entire card click
+        card.mousePressEvent = lambda event, r=result: self._open_video_preview(r) if event.button() == Qt.MouseButton.LeftButton else None
 
         layout = QVBoxLayout()
         layout.setSpacing(0)
@@ -1998,6 +2004,7 @@ class ClipABitApp(QWidget):
         thumbnail.setAlignment(Qt.AlignmentFlag.AlignCenter)
         thumbnail.setTextFormat(Qt.TextFormat.PlainText)
         thumbnail.setText(f"{display_name}\n{start_time:.1f}s - {end_time:.1f}s")
+        thumbnail.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
 
         # Schedule lazy thumbnail load so search results appear instantly
         if file_path and os.path.exists(file_path):
@@ -2021,6 +2028,7 @@ class ClipABitApp(QWidget):
         progress.setMinimum(0)
         progress.setMaximum(100)
         progress.setValue(int(min(score * 100, 100)))
+        progress.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
         progress.setStyleSheet(f"""
             QProgressBar {{
                 background-color: rgba(217, 217, 217, 0.5);
@@ -2037,6 +2045,9 @@ class ClipABitApp(QWidget):
         btn_container = QWidget()
         btn_container.setFixedHeight(70)
         btn_container.setStyleSheet(f"background-color: {t['card_bg']}; border-bottom-left-radius: 8px; border-bottom-right-radius: 8px;")
+        # Clicking the container (gaps around labels/buttons) also opens preview
+        btn_container.mousePressEvent = lambda event, r=result: self._open_video_preview(r) if event.button() == Qt.MouseButton.LeftButton else None
+        
         btn_layout = QVBoxLayout()
         btn_layout.setContentsMargins(10, 8, 10, 10)
         btn_layout.setSpacing(6)
@@ -2044,10 +2055,11 @@ class ClipABitApp(QWidget):
         name_label = QLabel(display_name)
         name_label.setTextFormat(Qt.TextFormat.PlainText)
         name_label.setStyleSheet(f"color: {t['text']}; font-size: 12px; font-weight: 500; background: transparent;")
+        name_label.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
         btn_layout.addWidget(name_label)
 
         # Preview button opens the video preview/trimmer dialog
-        btn_preview = QPushButton("Preview & Trim")
+        btn_preview = QPushButton("Select")
         btn_preview.setObjectName("addToTimelineBtn")
         btn_preview.setFixedHeight(28)
         btn_preview.setCursor(Qt.CursorShape.PointingHandCursor)
