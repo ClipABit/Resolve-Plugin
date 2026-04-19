@@ -236,9 +236,18 @@ class ClipABitApp(QWidget):
         main_layout.addWidget(self.status_label)
 
         self.setLayout(main_layout)
-        
+
         # Show appropriate content based on login state
         self._update_ui_for_auth_state()
+
+    def resizeEvent(self, event):
+        """Standard resize behavior."""
+        super().resizeEvent(event)
+
+    def _on_help_clicked(self):
+        """Open the Typeform feedback URL in the system browser."""
+        print(f"[Help] Opening feedback URL: {Config.FEEDBACK_URL}")
+        webbrowser.open(Config.FEEDBACK_URL)
     
     def _create_get_started_content(self):
         """Create the 'Get Started' screen shown when not logged in."""
@@ -401,10 +410,12 @@ class ClipABitApp(QWidget):
         self.logo_widget.setVisible(True)
         
         # Hide internal features when not logged in
+        self.btn_feedback.setVisible(is_logged_in)
         self.btn_media_pool.setVisible(is_logged_in)
-        self.btn_jobs_debug.setVisible(is_logged_in)
         self.btn_auth.setVisible(is_logged_in)
+        self.btn_jobs_debug.setVisible(is_logged_in)
         self.logo_widget.setVisible(is_logged_in)
+        
         self._update_media_pool_badge()
         QTimer.singleShot(0, self._update_media_pool_badge)
         self._update_idle_state_visibility()
@@ -434,11 +445,11 @@ class ClipABitApp(QWidget):
         # Spacer to push buttons to the right
         layout.addStretch()
         
-        # Sign In / Sign Out button (only visible when logged in)
-        self.btn_auth = QPushButton()
-        self.btn_auth.setObjectName("headerButton")
-        self.btn_auth.clicked.connect(self._on_auth_button_clicked)
-        layout.addWidget(self.btn_auth)
+        # Feedback button
+        self.btn_feedback = QPushButton("Feedback")
+        self.btn_feedback.setObjectName("headerButtonSecondary")
+        self.btn_feedback.clicked.connect(self._on_help_clicked)
+        layout.addWidget(self.btn_feedback)
         
         # Media Pool button
         self.btn_media_pool = QPushButton("Media Pool")
@@ -450,6 +461,12 @@ class ClipABitApp(QWidget):
         self.media_pool_badge.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
         self.media_pool_badge.hide()
         layout.addWidget(self.btn_media_pool)
+        
+        # Sign In / Sign Out button
+        self.btn_auth = QPushButton()
+        self.btn_auth.setObjectName("headerButton")
+        self.btn_auth.clicked.connect(self._on_auth_button_clicked)
+        layout.addWidget(self.btn_auth)
         
         # Small info icon button (top-right action)
         self.btn_jobs_debug = QPushButton("i")
@@ -699,6 +716,7 @@ class ClipABitApp(QWidget):
         """Clear the search input and results, returning to initial state with upload zone."""
         print("[Search] Clear button clicked")
         self._search_generation += 1  # Invalidate pending thumbnail loads
+        self.thumbnail_manager.cancel_all()
         self.search_input.clear()
         # Remove and destroy everything from results layout
         for i in reversed(range(self.results_layout.count())):
@@ -964,6 +982,9 @@ class ClipABitApp(QWidget):
                 border-radius: 0;
                 border: 1px solid {t['border']};
             }}
+            QFrame#resultCard:hover {{
+                border-color: {t['accent']};
+            }}
             
             /* Thumbnail placeholder (rectangular) */
             QLabel#thumbnail {{
@@ -987,7 +1008,7 @@ class ClipABitApp(QWidget):
             /* Add to timeline button (rectangular) */
             QPushButton#addToTimelineBtn {{
                 background-color: {t['accent']};
-                color: #000000;
+                color: {t['button_text']};
                 border: none;
                 border-radius: 0;
                 padding: 8px 16px;
@@ -1082,8 +1103,8 @@ class ClipABitApp(QWidget):
                 background-color: #4A4B52;
                 color: #FFFFFF;
                 border: none;
-                border-radius: 10px;
-                font-size: 12px;
+                border-radius: 16px;
+                font-size: 16px;
                 font-weight: bold;
             }}
             QPushButton#helpBubble:hover {{
@@ -1952,6 +1973,9 @@ class ClipABitApp(QWidget):
         card.setObjectName("resultCard")
         card.setFixedSize(280, 240)
         card.setCursor(Qt.CursorShape.PointingHandCursor)
+        
+        # Handle entire card click
+        card.mousePressEvent = lambda event, r=result: self._open_video_preview(r) if event.button() == Qt.MouseButton.LeftButton else None
 
         layout = QVBoxLayout()
         layout.setSpacing(0)
@@ -1973,6 +1997,7 @@ class ClipABitApp(QWidget):
         thumbnail.setAlignment(Qt.AlignmentFlag.AlignCenter)
         thumbnail.setTextFormat(Qt.TextFormat.PlainText)
         thumbnail.setText(f"{display_name}\n{start_time:.1f}s - {end_time:.1f}s")
+        thumbnail.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
 
         # Schedule lazy thumbnail load so search results appear instantly
         if file_path and os.path.exists(file_path):
@@ -1996,6 +2021,7 @@ class ClipABitApp(QWidget):
         progress.setMinimum(0)
         progress.setMaximum(100)
         progress.setValue(int(min(score * 100, 100)))
+        progress.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
         progress.setStyleSheet(f"""
             QProgressBar {{
                 background-color: rgba(217, 217, 217, 0.5);
@@ -2012,6 +2038,9 @@ class ClipABitApp(QWidget):
         btn_container = QWidget()
         btn_container.setFixedHeight(70)
         btn_container.setStyleSheet(f"background-color: {t['card_bg']}; border-bottom-left-radius: 8px; border-bottom-right-radius: 8px;")
+        # Clicking the container (gaps around labels/buttons) also opens preview
+        btn_container.mousePressEvent = lambda event, r=result: self._open_video_preview(r) if event.button() == Qt.MouseButton.LeftButton else None
+        
         btn_layout = QVBoxLayout()
         btn_layout.setContentsMargins(10, 8, 10, 10)
         btn_layout.setSpacing(6)
@@ -2019,10 +2048,11 @@ class ClipABitApp(QWidget):
         name_label = QLabel(display_name)
         name_label.setTextFormat(Qt.TextFormat.PlainText)
         name_label.setStyleSheet(f"color: {t['text']}; font-size: 12px; font-weight: 500; background: transparent;")
+        name_label.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
         btn_layout.addWidget(name_label)
 
         # Preview button opens the video preview/trimmer dialog
-        btn_preview = QPushButton("Preview & Trim")
+        btn_preview = QPushButton("Select")
         btn_preview.setObjectName("addToTimelineBtn")
         btn_preview.setFixedHeight(28)
         btn_preview.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -2745,6 +2775,10 @@ def main(resolve_api=None):
     _instance = ClipABitApp()
     _instance.show()
     _instance.raise_()
+    _instance.activateWindow()
+
+    print("ClipABit Plugin started.")
+    app_qt.exec()
     _instance.activateWindow()
 
     print("ClipABit Plugin started.")
