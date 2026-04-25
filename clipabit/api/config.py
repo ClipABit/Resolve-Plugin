@@ -36,6 +36,7 @@ class Config:
 
     # API Endpoints - routes within the ASGI apps
     SEARCH_API_URL = f"{SEARCH_BASE_URL}/search"
+    HEALTH_API_URL = f"{SEARCH_BASE_URL}/health"
     UPLOAD_API_URL = f"{SERVER_BASE_URL}/upload"
     STATUS_API_URL = f"{SERVER_BASE_URL}/status"
     # Timeouts and delays

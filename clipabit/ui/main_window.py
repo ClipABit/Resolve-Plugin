@@ -203,9 +203,16 @@ class ClipABitApp(QWidget):
         self._update_auth_button()
         
         # Setup refresh timer (disabled by default; refresh on demand)
-        self.refresh_timer = QTimer()
+        self.refresh_timer = QTimer(self)
         self.refresh_timer.timeout.connect(lambda: self._refresh_media_pool(debug=False))
         
+        # Setup health ping timer (1 minute interval to keep search container alive)
+        self.health_timer = QTimer(self)
+        self.health_timer.timeout.connect(self._ping_health)
+        self.health_timer.start(60000)
+        # First ping immediately
+        QTimer.singleShot(0, self._ping_health)
+
         # Run consistency check on startup
         self._run_consistency_check("startup")
         
@@ -1673,6 +1680,16 @@ class ClipABitApp(QWidget):
         except RuntimeError:
             # Dialog closed and underlying C++ widget has been destroyed.
             self.dialog_jobs_list = None
+
+    def _ping_health(self):
+        """Ping the health endpoint to keep the search service alive."""
+        # Note: We use the shared network client which is non-blocking
+        self._network.get(
+            Config.HEALTH_API_URL,
+            timeout=5,
+            on_success=lambda status, data: print(f"[Health] Ping search service: {status}"),
+            on_error=lambda msg: print(f"[Health] Health ping failed: {msg}")
+        )
 
     def _perform_search(self):
         """Perform semantic search (non-blocking)."""
